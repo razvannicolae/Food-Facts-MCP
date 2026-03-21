@@ -551,7 +551,7 @@ def search_fatsecret_foods(
         desc = f.get("food_description", "")
         parsed = _parse_food_description(desc)
         results.append({
-            "foodId": str(f.get("food_id", "")),
+            "foodId": int(f.get("food_id", 0)),
             "foodName": f.get("food_name"),
             "foodType": f.get("food_type"),
             "brandName": f.get("brand_name"),
@@ -580,7 +580,7 @@ def search_fatsecret_foods(
 # Tool 10 — get_fatsecret_food
 # ---------------------------------------------------------------------------
 
-def get_fatsecret_food(food_id: int | str) -> dict:
+def get_fatsecret_food(food_id: int) -> dict:
     food_id = str(food_id)
     cache = get_cache()
     key = FoodCache.make_key("get_fatsecret_food", food_id=food_id)

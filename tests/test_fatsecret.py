@@ -154,7 +154,7 @@ def test_search_parses_food_description():
         result = search_fatsecret_foods(query="chicken sandwich")
 
     first = result["foods"][0]
-    assert first["foodId"] == "36421"
+    assert first["foodId"] == 36421
     assert first["foodName"] == "Chick-fil-A Chicken Sandwich"
     assert first["brandName"] == "Chick-fil-A"
     assert first["calories"] == 440.0

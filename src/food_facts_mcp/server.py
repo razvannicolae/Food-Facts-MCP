@@ -229,7 +229,7 @@ def search_fatsecret_foods(
 
 
 @mcp.tool()
-def get_fatsecret_food(food_id: int | str) -> dict:
+def get_fatsecret_food(food_id: int) -> dict:
     """Get full nutrition details for a FatSecret food by its food ID.
 
     Returns all available servings with a complete nutrient breakdown:
