@@ -266,6 +266,47 @@ def meal_nutrition_summary(meal_description: str) -> list[dict]:
 # ===========================================================================
 
 
+_DEFAULT_ORIGINS = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "https://chat.openai.com",
+    "https://chatgpt.com",
+    "https://www.chatgpt.com",
+]
+
+
+def _build_http_app(extra_origins: list[str]):
+    """Wrap FastMCP's ASGI app with CORS middleware and a health check."""
+    import uvicorn  # noqa: F401 — ensure importable before we start
+    from starlette.middleware.cors import CORSMiddleware
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+
+    origins = list(dict.fromkeys(_DEFAULT_ORIGINS + extra_origins))
+
+    class HealthCheck(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            if request.method == "GET" and request.url.path == "/":
+                return JSONResponse({
+                    "name": "Food Facts MCP",
+                    "version": "0.3.0",
+                    "status": "ok",
+                    "endpoint": "/mcp",
+                })
+            return await call_next(request)
+
+    app = mcp.streamable_http_app()
+    app = HealthCheck(app)
+    app = CORSMiddleware(
+        app,
+        allow_origins=origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=True,
+    )
+    return app
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Food Facts MCP Server",
@@ -276,12 +317,21 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help="Extra allowed CORS origin (repeatable, e.g. https://myapp.com)",
+    )
     args = parser.parse_args()
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        mcp.run(transport="streamable-http", host=args.host, port=args.port)
+        import uvicorn
+        app = _build_http_app(args.allow_origin)
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
