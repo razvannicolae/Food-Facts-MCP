@@ -1,175 +1,135 @@
-# USDA Foundation Foods Mini MCP
+# USDA FoodData Central MCP Server
 
-This repo is a small, hackathon-ready version of your idea: it turns the USDA FoodData Central Foundation Foods download into a local SQLite database and exposes it through a minimal MCP server.
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that gives AI agents real-time access to the [USDA FoodData Central](https://fdc.nal.usda.gov) database. Search any food, retrieve full nutrient tables, compare foods side-by-side, and get properly formatted citations — all backed by the live FDC REST API.
 
-It is intentionally scoped as a mini build:
+## Features
 
-- `Foundation Foods` only, not the full USDA corpus
-- Python standard library only
-- SQLite-backed
-- simple MCP tools for search, nutrient lookup, comparisons, and citation metadata
+**8 Tools**
+| Tool | What it does |
+|------|-------------|
+| `search_foods` | Keyword search with optional data type / brand filter |
+| `get_food` | Full food details by FDC ID |
+| `get_multiple_foods` | Batch lookup — up to 20 IDs at once |
+| `get_food_nutrients` | Human-readable nutrient table with citation |
+| `compare_foods` | Side-by-side nutrient comparison of two foods |
+| `list_foods` | Browse all foods with pagination |
+| `list_foods_by_nutrient` | Top N foods ranked by a given nutrient |
+| `get_food_citation` | Citation-ready metadata (APA + MLA) |
 
-## What It Does
-
-The project takes the USDA Foundation Foods JSON archive and builds a local database with:
-
-- food descriptions
-- nutrient values per 100 g
-- portion metadata
-- source and release metadata
-
-Then it exposes that data through these MCP tools:
-
-- `search_foods`
-- `get_food_nutrients`
-- `compare_foods`
-- `list_foods_by_nutrient`
-- `get_food_source_metadata`
-
-## Repo Layout
-
-- `src/usda_mcp/builder.py`: ingests the USDA zip into SQLite
-- `src/usda_mcp/repository.py`: query layer for foods and nutrients
-- `src/usda_mcp/server.py`: stdio and HTTP MCP server
-- `src/usda_mcp/demo.py`: prints a few sample queries
-- `tests/test_repository.py`: basic integration tests
-
-## Dataset
-
-This mini version is built around the USDA FoodData Central Foundation Foods JSON release:
-
-- source: `https://fdc.nal.usda.gov/download-datasets/`
-- archive used: `FoodData_Central_foundation_food_json_2025-12-18.zip`
-
-The raw download is ignored in git via `.gitignore`, but if you place the USDA zip at:
-
-`data/raw/FoodData_Central_foundation_food_json_2025-12-18.zip`
-
-the build script will pick it up automatically.
-
-## Quickstart
-
-### 1. Create the database
-
-```bash
-PYTHONPATH=src python3 -m usda_mcp.builder
+Every tool response includes a `citation` block:
+```json
+{
+  "source": "USDA FoodData Central",
+  "dataset": "Foundation",
+  "fdcId": 747448,
+  "url": "https://fdc.nal.usda.gov/food-details/747448/nutrients",
+  "publicationDate": "2019-04-01"
+}
 ```
 
-That writes:
+**4 Resources** (URI-addressed read-only data)
+- `usda://food/{fdcId}` — live food item JSON
+- `usda://nutrients/reference` — all standard USDA nutrient numbers, names, and units
+- `usda://datasets/info` — descriptions of Foundation, SR Legacy, Branded, Survey datasets
+- `usda://server/metadata` — version, rate limits, API key status
 
-`data/derived/usda_foundation_mini.sqlite`
+**4 Prompt Templates**
+- `analyze_food_nutrition` — structured nutrition analysis with citations
+- `compare_foods_for_goal` — goal-oriented food comparison
+- `dietary_advice` — evidence-based dietary advice anchored to FDC data
+- `meal_nutrition_summary` — combined nutrition breakdown for a full meal
 
-### 2. Run the demo queries
+## Setup
 
-```bash
-PYTHONPATH=src python3 -m usda_mcp.demo
-```
+### 1. Get a free API key
 
-### 3. Run the tests
+Register at [api.data.gov/signup](https://api.data.gov/signup/) to get a key with 1 000 req/hr (vs. 30/hr for the demo key).
 
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
-```
-
-## MCP Server
-
-Run the local stdio MCP server with:
-
-```bash
-PYTHONPATH=src python3 -m usda_mcp.server
-```
-
-Run the HTTP MCP endpoint with:
+### 2. Install
 
 ```bash
-PYTHONPATH=src python3 -m usda_mcp.server --transport http --host 127.0.0.1 --port 8000
+pip install -e .
 ```
 
-That exposes:
-
-`http://127.0.0.1:8000/mcp`
-
-There is also a small health route at:
-
-`http://127.0.0.1:8000/`
-
-If you prefer package scripts:
+### 3. Configure your API key
 
 ```bash
-python3 -m pip install -e .
-usda-mini-build
-usda-mini-demo
-usda-mini-server
+cp .env.example .env
+# Edit .env and set USDA_FDC_API_KEY=your_key_here
 ```
 
-## Expose It Publicly For ChatGPT
+## Usage
 
-ChatGPT Apps expects a public HTTPS MCP URL, so for local development you can tunnel the local HTTP server.
+### With Claude Desktop
 
-### Option 1: `ngrok`
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
-Start the HTTP MCP server:
+```json
+{
+  "mcpServers": {
+    "usda-fdc": {
+      "command": "/Users/razvannicolae/.pyenv/versions/3.10.18/bin/python",
+      "args": ["-m", "usda_mcp.server"],
+      "cwd": "/Users/razvannicolae/Code/HooHacks2026",
+      "env": {
+        "USDA_FDC_API_KEY": "your_key_here"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop — you'll see the server listed under the MCP tools icon.
+
+### With Claude Code (this CLI)
+
+Add to your project's `.claude/settings.json` or run:
 
 ```bash
-PYTHONPATH=src python3 -m usda_mcp.server --transport http --host 127.0.0.1 --port 8000 --allow-origin-host your-ngrok-host.ngrok-free.app
+claude mcp add usda-fdc -- python -m usda_mcp.server
 ```
 
-In another terminal:
+Or manually in `.claude/settings.json`:
+```json
+{
+  "mcpServers": {
+    "usda-fdc": {
+      "command": "python",
+      "args": ["-m", "usda_mcp.server"],
+      "cwd": "/Users/razvannicolae/Code/HooHacks2026",
+      "env": {
+        "USDA_FDC_API_KEY": "your_key_here"
+      }
+    }
+  }
+}
+```
+
+### Standalone HTTP server
 
 ```bash
-ngrok http 8000
+usda-mcp-server --transport streamable-http --port 8000
+# or
+python -m usda_mcp.server --transport streamable-http --port 8000
 ```
 
-Use the HTTPS forwarding URL from `ngrok`, and point ChatGPT to:
+## Data Types
 
-`https://your-ngrok-host.ngrok-free.app/mcp`
+| Type | Coverage | Best for |
+|------|----------|----------|
+| **Foundation** | Core commodity foods (raw ingredients) | Research — most precise analytical data |
+| **SR Legacy** | ~8 600 foods (raw, processed, prepared) | General nutrition analysis |
+| **Branded** | Commercial products (packaged, fast food) | Specific product label verification |
+| **Survey (FNDDS)** | Foods as consumed in NHANES surveys | Epidemiological / population studies |
 
-### Option 2: `cloudflared`
-
-Start the HTTP MCP server:
+## Development
 
 ```bash
-PYTHONPATH=src python3 -m usda_mcp.server --transport http --host 127.0.0.1 --port 8000 --allow-origin-host your-tunnel-host.trycloudflare.com
+pip install -e .
+python -m pytest tests/ -v   # 25 unit tests, all mocked
 ```
 
-In another terminal:
+## Sources
 
-```bash
-cloudflared tunnel --url http://127.0.0.1:8000
-```
-
-Use the HTTPS tunnel URL and append `/mcp`.
-
-### Important note
-
-The server validates the `Origin` header in HTTP mode. If your public tunnel uses a host that is not already allowed, add it with:
-
-```bash
---allow-origin-host your-public-hostname
-```
-
-The default allowlist already includes:
-
-- `localhost`
-- `127.0.0.1`
-- `chat.openai.com`
-- `chatgpt.com`
-- `www.chatgpt.com`
-
-## Example Use Cases
-
-- “How much protein is in salmon?”
-- “Compare potassium in banana vs avocado.”
-- “Which foods are highest in iron?”
-- “Show the USDA citation metadata for spinach.”
-
-## Why This Is A Good Hackathon MVP
-
-This version proves the core idea without boiling the ocean:
-
-- uses a real USDA download
-- grounds answers in structured nutrient data
-- returns citation metadata instead of unsupported guesses
-- exposes the data in an MCP-friendly way
-
-The next step after the hackathon would be adding more USDA data types like Branded Foods and FNDDS, stronger fuzzy search, and richer citations.
+- [USDA FDC API Guide](https://fdc.nal.usda.gov/api-guide/)
+- [FDC OpenAPI Spec](https://fdc.nal.usda.gov/api-spec/fdc_api.html)

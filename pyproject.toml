@@ -1,18 +1,24 @@
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "usda-foundation-mini"
+name = "usda-mcp"
 version = "0.1.0"
-description = "Mini USDA FoodData Central Foundation Foods MCP server"
+description = "USDA FoodData Central MCP Server — live API backed"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+]
 
 [project.scripts]
-usda-mini-build = "usda_mcp.builder:main"
-usda-mini-demo = "usda_mcp.demo:main"
-usda-mini-server = "usda_mcp.server:main"
+usda-mcp-server = "usda_mcp.server:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/usda_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,495 +1,369 @@
+"""USDA FoodData Central MCP Server.
+
+Transport options (--transport flag):
+  stdio               — default, used by MCP clients like Claude Desktop
+  streamable-http     — HTTP server on 0.0.0.0:8000 (or --port N)
+
+Capabilities advertised:
+  tools, resources (no subscribe), prompts, sampling
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
-from dataclasses import dataclass, field
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
-from uuid import uuid4
 
-from usda_mcp.repository import FoodRepository
+from dotenv import load_dotenv
 
+load_dotenv()
 
-SUPPORTED_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-11-25"}
-DEFAULT_PROTOCOL_VERSION = "2025-11-25"
+from mcp.server.fastmcp import FastMCP
 
-DEFAULT_ALLOWED_ORIGIN_HOSTS = {
-    "localhost",
-    "127.0.0.1",
-    "chat.openai.com",
-    "chatgpt.com",
-    "www.chatgpt.com",
-}
+from . import tools as _tools
+from . import resources as _resources
+from . import prompts as _prompts
+from .prompts import PROMPT_DEFINITIONS
+from .resources import NUTRIENT_REFERENCE, DATASET_INFO
 
-TOOLS = [
-    {
-        "name": "search_foods",
-        "description": "Search USDA Foundation Foods by description.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Food name or phrase to search for."},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "get_food_nutrients",
-        "description": "Return core nutrient values for a USDA Foundation food.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "food_query": {"type": "string", "description": "Food description text or FDC ID."},
-                "nutrients": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional nutrient filters like protein, iron, or potassium.",
-                },
-            },
-            "required": ["food_query"],
-        },
-    },
-    {
-        "name": "compare_foods",
-        "description": "Compare a nutrient value between two USDA foods.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "food_a": {"type": "string"},
-                "food_b": {"type": "string"},
-                "nutrient": {"type": "string"},
-            },
-            "required": ["food_a", "food_b", "nutrient"],
-        },
-    },
-    {
-        "name": "list_foods_by_nutrient",
-        "description": "Rank USDA foods by a given nutrient amount per 100g.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "nutrient": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
-            },
-            "required": ["nutrient"],
-        },
-    },
-    {
-        "name": "get_food_source_metadata",
-        "description": "Return source and citation metadata for a USDA Foundation food.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "food_query": {"type": "string"},
-            },
-            "required": ["food_query"],
-        },
-    },
-]
+# ---------------------------------------------------------------------------
+# Server instance
+# ---------------------------------------------------------------------------
+
+mcp = FastMCP(
+    "USDA FoodData Central",
+    instructions=(
+        "This server gives you real-time access to USDA FoodData Central (FDC). "
+        "Use search_foods to find foods by keyword, get_food_nutrients for detailed "
+        "nutrient tables, compare_foods for side-by-side analysis, and "
+        "get_food_citation for citation-ready metadata. "
+        "All tool responses include a 'citation' block with fdcId, dataset, "
+        "publication date, and URL pointing to fdc.nal.usda.gov.\n\n"
+        "IMPORTANT — choosing the right data_type:\n"
+        "- Natural/whole foods (fruits, vegetables, meats, grains as grown/raised): "
+        "use data_type=['Foundation', 'SR Legacy']. Foundation has the most precise "
+        "analytical data; SR Legacy has the broadest coverage.\n"
+        "- Processed/packaged/fortified products (cereals, supplements, branded items): "
+        "use data_type=['Branded'].\n"
+        "- Foods as typically eaten in meals (cooked, mixed dishes): "
+        "use data_type=['Survey (FNDDS)'].\n"
+        "- No filter = all datasets mixed; Branded dominates (largest dataset) and "
+        "will flood results with fortified/processed products.\n"
+        "Always infer the user's intent: questions about 'natural sources of X' or "
+        "'whole foods high in Y' should use data_type=['Foundation', 'SR Legacy']. "
+        "Questions about specific products or brands should use data_type=['Branded'].\n\n"
+        "DEFAULT BEHAVIOR for 'top foods high in X' or 'best sources of X': "
+        "ALWAYS call list_foods_by_nutrient with prefer_whole_foods=True unless the "
+        "user explicitly asks for packaged, fortified, or branded products. "
+        "Never search for the nutrient name with search_foods to rank foods — "
+        "use list_foods_by_nutrient instead, which uses food-category terms to avoid "
+        "fortified products appearing in results."
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Tools — 8 total
+# ---------------------------------------------------------------------------
 
 
-def success(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "result": result}
+@mcp.tool()
+def search_foods(
+    query: str,
+    data_type: list[str] | None = None,
+    brand_owner: str | None = None,
+    page_size: int = 25,
+    page_number: int = 1,
+) -> dict:
+    """Search USDA FoodData Central by keyword.
+
+    Without a data_type filter, results mix all datasets and Branded (packaged/
+    fortified products) will dominate. Set data_type based on user intent:
+    - Natural/whole foods (fruits, veg, meats, grains) → ["Foundation", "SR Legacy"]
+    - Packaged/branded/fortified products → ["Branded"]
+    - Foods as eaten in meals (cooked, mixed) → ["Survey (FNDDS)"]
+
+    Args:
+        query: Search term (food name, ingredient, brand, etc.)
+        data_type: Filter by dataset(s). Options: "Foundation", "SR Legacy",
+            "Branded", "Survey (FNDDS)". Omit only when intentionally searching
+            across all datasets.
+        brand_owner: Optional brand name filter (Branded foods only)
+        page_size: Results per page, 1–200 (default 25)
+        page_number: Page number, starting at 1
+    """
+    return _tools.search_foods(
+        query=query,
+        data_type=data_type,
+        brand_owner=brand_owner,
+        page_size=page_size,
+        page_number=page_number,
+    )
 
 
-def error(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+@mcp.tool()
+def get_food(
+    fdc_id: int,
+    nutrients: list[int] | None = None,
+    format: str | None = None,
+) -> dict:
+    """Get full details for a single food item by FDC ID.
+
+    Args:
+        fdc_id: USDA FoodData Central ID (e.g. 747448)
+        nutrients: Optional list of nutrient numbers to include (up to 25)
+        format: "abridged" for a smaller response, "full" (default) for all fields
+    """
+    return _tools.get_food(fdc_id=fdc_id, nutrients=nutrients, format=format)
 
 
-def tool_result(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "content": [{"type": "text", "text": json.dumps(payload, indent=2)}],
-        "structuredContent": payload,
-        "isError": False,
-    }
+@mcp.tool()
+def get_multiple_foods(
+    fdc_ids: list[int],
+    nutrients: list[int] | None = None,
+) -> list[dict]:
+    """Get details for up to 20 foods by FDC ID in a single API call.
+
+    Args:
+        fdc_ids: List of FDC IDs (max 20)
+        nutrients: Optional list of nutrient numbers to include
+    """
+    return _tools.get_multiple_foods(fdc_ids=fdc_ids, nutrients=nutrients)
 
 
-def read_message() -> dict[str, Any] | None:
-    headers: dict[str, str] = {}
-    while True:
-        line = sys.stdin.buffer.readline()
-        if not line:
-            return None
-        if line in (b"\r\n", b"\n"):
-            break
-        key, value = line.decode("utf-8").split(":", 1)
-        headers[key.strip().lower()] = value.strip()
+@mcp.tool()
+def get_food_nutrients(fdc_id: int) -> dict:
+    """Fetch a food and return a human-readable nutrient table with citation.
 
-    content_length = int(headers["content-length"])
-    payload = sys.stdin.buffer.read(content_length)
-    return json.loads(payload.decode("utf-8"))
+    Returns nutrients sorted by nutrient number with name, amount, unit,
+    and percent daily value where available.
+
+    Args:
+        fdc_id: USDA FoodData Central ID
+    """
+    return _tools.get_food_nutrients(fdc_id=fdc_id)
 
 
-def write_message(message: dict[str, Any]) -> None:
-    encoded = json.dumps(message).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(encoded)}\r\n\r\n".encode("utf-8"))
-    sys.stdout.buffer.write(encoded)
-    sys.stdout.buffer.flush()
+@mcp.tool()
+def compare_foods(fdc_id_a: int, fdc_id_b: int) -> dict:
+    """Compare nutrient profiles of two foods side by side.
+
+    Returns a comparison table showing each nutrient, amounts for both foods,
+    the difference (A minus B), and which food has more.
+
+    Args:
+        fdc_id_a: FDC ID of the first food
+        fdc_id_b: FDC ID of the second food
+    """
+    return _tools.compare_foods(fdc_id_a=fdc_id_a, fdc_id_b=fdc_id_b)
 
 
-@dataclass
-class MCPApplication:
-    db_path: Path
-    endpoint: str = "/mcp"
-    allowed_origin_hosts: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_ORIGIN_HOSTS))
-    sessions: dict[str, str] = field(default_factory=dict)
+@mcp.tool()
+def list_foods(
+    data_type: list[str] | None = None,
+    page_size: int = 50,
+    page_number: int = 1,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    """Browse all foods with pagination and optional filtering.
 
-    def _open_repo(self) -> FoodRepository:
-        return FoodRepository(self.db_path)
-
-    def handle_jsonrpc(
-        self,
-        request: dict[str, Any],
-        *,
-        session_id: str | None = None,
-        protocol_version: str | None = None,
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        method = request.get("method")
-        request_id = request.get("id")
-        params = request.get("params", {})
-        negotiated_protocol = self._negotiate_protocol(protocol_version, params)
-
-        if method == "initialize":
-            new_session_id = uuid4().hex
-            self.sessions[new_session_id] = negotiated_protocol
-            return (
-                success(
-                    request_id,
-                    {
-                        "protocolVersion": negotiated_protocol,
-                        "capabilities": {"tools": {}},
-                        "serverInfo": {"name": "usda-foundation-mini", "version": "0.2.0"},
-                    },
-                ),
-                new_session_id,
-            )
-
-        if method == "notifications/initialized":
-            return None, session_id
-
-        if method == "ping":
-            return success(request_id, {}), session_id
-
-        if method == "tools/list":
-            return success(request_id, {"tools": TOOLS}), session_id
-
-        if method == "tools/call":
-            name = params.get("name")
-            arguments = params.get("arguments", {})
-            try:
-                with self._open_repo() as repo:
-                    result = self._invoke_tool(repo, name, arguments)
-            except Exception as exc:  # pragma: no cover - exercised via integration flow
-                return (
-                    success(
-                        request_id,
-                        {
-                            "content": [{"type": "text", "text": str(exc)}],
-                            "structuredContent": {"error": str(exc)},
-                            "isError": True,
-                        },
-                    ),
-                    session_id,
-                )
-            return success(request_id, tool_result(result)), session_id
-
-        if request_id is None:
-            return None, session_id
-
-        return error(request_id, -32601, f"Unknown method '{method}'."), session_id
-
-    def _invoke_tool(self, repo: FoodRepository, name: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
-        if name == "search_foods":
-            return repo.search_foods(arguments["query"], int(arguments.get("limit", 10)))
-        if name == "get_food_nutrients":
-            return repo.get_food_nutrients(arguments["food_query"], arguments.get("nutrients"))
-        if name == "compare_foods":
-            return repo.compare_foods(arguments["food_a"], arguments["food_b"], arguments["nutrient"])
-        if name == "list_foods_by_nutrient":
-            return repo.list_foods_by_nutrient(arguments["nutrient"], int(arguments.get("limit", 10)))
-        if name == "get_food_source_metadata":
-            return repo.get_food_source_metadata(arguments["food_query"])
-        raise ValueError(f"Unknown tool '{name}'.")
-
-    def validate_session(self, session_id: str | None, method: str | None) -> tuple[bool, str | None]:
-        if method == "initialize":
-            return True, None
-        if session_id is None:
-            return True, None
-        if session_id in self.sessions:
-            return True, self.sessions[session_id]
-        return False, None
-
-    def delete_session(self, session_id: str | None) -> bool:
-        if session_id and session_id in self.sessions:
-            del self.sessions[session_id]
-            return True
-        return False
-
-    def is_origin_allowed(self, origin: str | None) -> bool:
-        if not origin:
-            return True
-        parsed = urlparse(origin)
-        if not parsed.scheme or not parsed.hostname:
-            return False
-        return parsed.hostname in self.allowed_origin_hosts
-
-    @staticmethod
-    def _negotiate_protocol(protocol_header: str | None, params: dict[str, Any]) -> str:
-        candidate = params.get("protocolVersion") or protocol_header or DEFAULT_PROTOCOL_VERSION
-        if candidate not in SUPPORTED_PROTOCOL_VERSIONS:
-            raise ValueError(
-                f"Unsupported MCP protocol version '{candidate}'. "
-                f"Supported versions: {sorted(SUPPORTED_PROTOCOL_VERSIONS)}"
-            )
-        return candidate
+    Args:
+        data_type: Filter by data type(s): Foundation, Branded, SR Legacy,
+            Survey (FNDDS)
+        page_size: Results per page, 1–200 (default 50)
+        page_number: Page number (default 1)
+        sort_by: Sort field — "dataType.keyword", "description.keyword",
+            "fdcId", or "publishedDate"
+        sort_order: "asc" or "desc"
+    """
+    return _tools.list_foods(
+        data_type=data_type,
+        page_size=page_size,
+        page_number=page_number,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
 
 
-def create_http_handler(app: MCPApplication) -> type[BaseHTTPRequestHandler]:
-    class MCPRequestHandler(BaseHTTPRequestHandler):
-        server_version = "USDAFoundationMiniMCP/0.2.0"
+@mcp.tool()
+def list_foods_by_nutrient(
+    nutrient_name: str,
+    top_n: int = 10,
+    data_type: list[str] | None = None,
+    prefer_whole_foods: bool = False,
+) -> dict:
+    """Return top N foods ranked highest for a given nutrient.
 
-        def do_OPTIONS(self) -> None:  # noqa: N802
-            if self.path != app.endpoint:
-                self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            if not app.is_origin_allowed(self.headers.get("Origin")):
-                self._send_forbidden_origin()
-                return
-            self.send_response(HTTPStatus.NO_CONTENT)
-            self._send_cors_headers()
-            self.send_header("Allow", "POST, GET, DELETE, OPTIONS")
-            self.end_headers()
+    ALWAYS set prefer_whole_foods=True (or data_type=["Foundation","SR Legacy"])
+    unless the user specifically wants processed/packaged products. Without it,
+    results are dominated by Branded foods — fortified cereals, supplement drinks,
+    and packaged goods artificially high in the nutrient.
 
-        def do_GET(self) -> None:  # noqa: N802
-            if self.path == "/":
-                self._send_json(
-                    HTTPStatus.OK,
-                    {
-                        "name": "usda-foundation-mini",
-                        "status": "ok",
-                        "endpoint": app.endpoint,
-                        "transport": "streamable-http-json",
-                    },
-                )
-                return
-            if self.path != app.endpoint:
-                self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            if not app.is_origin_allowed(self.headers.get("Origin")):
-                self._send_forbidden_origin()
-                return
-            self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
-            self._send_cors_headers()
-            self.send_header("Allow", "POST, OPTIONS, DELETE")
-            self.end_headers()
+    When prefer_whole_foods=True, the tool uses food-category search terms instead
+    of the nutrient name, so "vitamin C" searches "citrus orange strawberry pepper
+    broccoli" — returning naturally nutrient-rich whole foods, not fortified products.
 
-        def do_DELETE(self) -> None:  # noqa: N802
-            if self.path != app.endpoint:
-                self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            if not app.is_origin_allowed(self.headers.get("Origin")):
-                self._send_forbidden_origin()
-                return
-            deleted = app.delete_session(self.headers.get("MCP-Session-Id"))
-            status = HTTPStatus.NO_CONTENT if deleted else HTTPStatus.METHOD_NOT_ALLOWED
-            self.send_response(status)
-            self._send_cors_headers()
-            self.end_headers()
-
-        def do_POST(self) -> None:  # noqa: N802
-            if self.path != app.endpoint:
-                self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            origin = self.headers.get("Origin")
-            if not app.is_origin_allowed(origin):
-                self._send_forbidden_origin()
-                return
-            if not self._accepts_mcp_post():
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST,
-                    error(None, -32000, "Accept header must support application/json."),
-                )
-                return
-
-            content_length = int(self.headers.get("Content-Length", "0"))
-            try:
-                request = json.loads(self.rfile.read(content_length).decode("utf-8"))
-            except json.JSONDecodeError:
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST,
-                    error(None, -32700, "Invalid JSON in request body."),
-                )
-                return
-
-            method = request.get("method")
-            session_id = self.headers.get("MCP-Session-Id")
-            is_valid_session, negotiated_protocol = app.validate_session(session_id, method)
-            if not is_valid_session:
-                self._send_json(HTTPStatus.NOT_FOUND, error(request.get("id"), -32001, "Unknown session."))
-                return
-
-            protocol_header = self.headers.get("MCP-Protocol-Version") or negotiated_protocol
-            try:
-                response, maybe_new_session_id = app.handle_jsonrpc(
-                    request,
-                    session_id=session_id,
-                    protocol_version=protocol_header,
-                )
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, error(request.get("id"), -32002, str(exc)))
-                return
-
-            final_session_id = maybe_new_session_id or session_id
-            if response is None:
-                self.send_response(HTTPStatus.ACCEPTED)
-                self._send_cors_headers()
-                self._send_mcp_headers(final_session_id, protocol_header or DEFAULT_PROTOCOL_VERSION)
-                self.end_headers()
-                return
-
-            self._send_json(
-                HTTPStatus.OK,
-                response,
-                session_id=final_session_id,
-                protocol_version=self._response_protocol_version(response, protocol_header),
-            )
-
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
-            sys.stderr.write(f"{self.address_string()} - {format % args}\n")
-
-        def _accepts_mcp_post(self) -> bool:
-            accept = self.headers.get("Accept", "")
-            if not accept:
-                return False
-            accepted_types = {item.split(";")[0].strip() for item in accept.split(",")}
-            return "application/json" in accepted_types or "*/*" in accepted_types
-
-        def _response_protocol_version(
-            self, response: dict[str, Any], fallback: str | None
-        ) -> str:
-            result = response.get("result")
-            if isinstance(result, dict) and "protocolVersion" in result:
-                return result["protocolVersion"]
-            if fallback in SUPPORTED_PROTOCOL_VERSIONS:
-                return fallback
-            return DEFAULT_PROTOCOL_VERSION
-
-        def _send_forbidden_origin(self) -> None:
-            self._send_json(
-                HTTPStatus.FORBIDDEN,
-                error(None, -32003, "Origin header is not allowed for this MCP server."),
-            )
-
-        def _send_json(
-            self,
-            status: HTTPStatus,
-            payload: dict[str, Any],
-            *,
-            session_id: str | None = None,
-            protocol_version: str | None = None,
-        ) -> None:
-            encoded = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self._send_cors_headers()
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self._send_mcp_headers(session_id, protocol_version)
-            self.end_headers()
-            self.wfile.write(encoded)
-
-        def _send_mcp_headers(self, session_id: str | None, protocol_version: str | None) -> None:
-            if session_id:
-                self.send_header("MCP-Session-Id", session_id)
-            if protocol_version:
-                self.send_header("MCP-Protocol-Version", protocol_version)
-
-        def _send_cors_headers(self) -> None:
-            origin = self.headers.get("Origin")
-            if origin and app.is_origin_allowed(origin):
-                self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
-            self.send_header(
-                "Access-Control-Allow-Headers",
-                "Accept, Content-Type, MCP-Protocol-Version, MCP-Session-Id, Last-Event-ID",
-            )
-            self.send_header("Vary", "Origin")
-
-    return MCPRequestHandler
+    Args:
+        nutrient_name: Nutrient to rank by (e.g., "iron", "vitamin C", "protein",
+            "folate", "magnesium"). Use the standard USDA name where possible.
+        top_n: Number of top results to return (default 10)
+        prefer_whole_foods: STRONGLY RECOMMENDED — set True whenever the user asks
+            about natural sources, whole foods, or does not specifically request
+            processed/packaged products. Restricts to Foundation + SR Legacy and
+            uses food-category search to avoid fortified products. Default False.
+        data_type: Explicit dataset filter — overrides prefer_whole_foods.
+            ["Foundation", "SR Legacy"] = natural/whole foods (same as prefer_whole_foods=True)
+            ["Branded"] = packaged/fortified products only
+    """
+    effective_data_type = data_type
+    if prefer_whole_foods and data_type is None:
+        effective_data_type = ["Foundation", "SR Legacy"]
+    return _tools.list_foods_by_nutrient(
+        nutrient_name=nutrient_name, top_n=top_n, data_type=effective_data_type
+    )
 
 
-def run_stdio_server(app: MCPApplication) -> None:
-    while True:
-        request = read_message()
-        if request is None:
-            break
-        try:
-            response, _ = app.handle_jsonrpc(request)
-        except ValueError as exc:
-            request_id = request.get("id") if isinstance(request, dict) else None
-            response = error(request_id, -32002, str(exc))
-        if response is not None:
-            write_message(response)
+@mcp.tool()
+def get_food_citation(fdc_id: int) -> dict:
+    """Return citation-ready metadata for a food item.
+
+    Includes APA and MLA formatted citation strings plus the standard
+    citation block with fdcId, dataset, publication date, and URL.
+
+    Args:
+        fdc_id: USDA FoodData Central ID
+    """
+    return _tools.get_food_citation(fdc_id=fdc_id)
 
 
-def create_http_server(
-    app: MCPApplication,
-    host: str = "127.0.0.1",
-    port: int = 8000,
-) -> HTTPServer:
-    handler = create_http_handler(app)
-    return HTTPServer((host, port), handler)
+# ---------------------------------------------------------------------------
+# Resources — 4 total
+# ---------------------------------------------------------------------------
 
 
-def run_http_server(app: MCPApplication, host: str, port: int) -> None:
-    server = create_http_server(app, host=host, port=port)
-    print(f"Serving USDA MCP over HTTP at http://{host}:{port}{app.endpoint}", file=sys.stderr)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+@mcp.resource("usda://food/{fdc_id}")
+def food_resource(fdc_id: str) -> str:
+    """Full food item JSON from the live USDA FDC API.
+
+    Returns the complete FDC food object as pretty-printed JSON.
+    """
+    data = _resources.get_food_resource(int(fdc_id))
+    return json.dumps(data, indent=2)
+
+
+@mcp.resource("usda://nutrients/reference")
+def nutrients_reference_resource() -> str:
+    """Static list of all standard USDA nutrient numbers, names, and units."""
+    return json.dumps(NUTRIENT_REFERENCE, indent=2)
+
+
+@mcp.resource("usda://datasets/info")
+def datasets_info_resource() -> str:
+    """Descriptions of each FDC data type: what they cover and when to use them."""
+    return json.dumps(DATASET_INFO, indent=2)
+
+
+@mcp.resource("usda://server/metadata")
+def server_metadata_resource() -> str:
+    """Server version, API base URL, rate limit info, and API key status."""
+    return json.dumps(_resources.get_server_metadata(), indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Prompts — 4 total
+# ---------------------------------------------------------------------------
+
+
+@mcp.prompt()
+def analyze_food_nutrition(food_name: str, health_goal: str = "") -> list[dict]:
+    """Analyze nutrition data for a food item with USDA FDC citations.
+
+    Args:
+        food_name: Name of the food to analyze
+        health_goal: Optional health goal (e.g., weight loss, muscle gain)
+    """
+    return _prompts.get_prompt_messages(
+        "analyze_food_nutrition",
+        {"food_name": food_name, "health_goal": health_goal},
+    )
+
+
+@mcp.prompt()
+def compare_foods_for_goal(food_a: str, food_b: str, goal: str) -> list[dict]:
+    """Compare two foods for a specific health or dietary goal.
+
+    Args:
+        food_a: First food to compare
+        food_b: Second food to compare
+        goal: Health/dietary goal (e.g., 'high protein', 'low sodium')
+    """
+    return _prompts.get_prompt_messages(
+        "compare_foods_for_goal",
+        {"food_a": food_a, "food_b": food_b, "goal": goal},
+    )
+
+
+@mcp.prompt()
+def dietary_advice(query: str, dietary_restrictions: str = "") -> list[dict]:
+    """Evidence-based dietary advice anchored to specific USDA FDC food items.
+
+    Args:
+        query: The dietary question or concern
+        dietary_restrictions: Optional restrictions (e.g., vegan, gluten-free)
+    """
+    return _prompts.get_prompt_messages(
+        "dietary_advice",
+        {"query": query, "dietary_restrictions": dietary_restrictions},
+    )
+
+
+@mcp.prompt()
+def meal_nutrition_summary(meal_description: str) -> list[dict]:
+    """Break a meal into components and produce a combined nutrition summary.
+
+    Args:
+        meal_description: Description of the meal
+    """
+    return _prompts.get_prompt_messages(
+        "meal_nutrition_summary",
+        {"meal_description": meal_description},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a mini USDA Foundation Foods MCP server.")
-    parser.add_argument("--db-path", type=Path, default=Path("data/derived/usda_foundation_mini.sqlite"))
+    parser = argparse.ArgumentParser(
+        description="USDA FoodData Central MCP Server",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument(
         "--transport",
-        choices=("stdio", "http"),
+        choices=["stdio", "streamable-http"],
         default="stdio",
-        help="Run as a local stdio MCP server or a remote HTTP MCP endpoint.",
-    )
-    parser.add_argument("--host", default="127.0.0.1", help="HTTP host to bind when using --transport http.")
-    parser.add_argument("--port", type=int, default=8000, help="HTTP port to bind when using --transport http.")
-    parser.add_argument(
-        "--endpoint",
-        default="/mcp",
-        help="HTTP MCP endpoint path when using --transport http.",
+        help="MCP transport to use",
     )
     parser.add_argument(
-        "--allow-origin-host",
-        action="append",
-        default=[],
-        help="Additional allowed Origin hostnames for HTTP mode, e.g. your tunnel domain.",
+        "--host",
+        default="127.0.0.1",
+        help="Host for HTTP transport",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for HTTP transport",
     )
     args = parser.parse_args()
 
-    allowed_origins = set(DEFAULT_ALLOWED_ORIGIN_HOSTS)
-    allowed_origins.update(args.allow_origin_host)
-    app = MCPApplication(db_path=args.db_path, endpoint=args.endpoint, allowed_origin_hosts=allowed_origins)
-
-    if args.transport == "http":
-        run_http_server(app, host=args.host, port=args.port)
-        return
-
-    run_stdio_server(app)
+    if args.transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        mcp.run(transport="streamable-http", host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
