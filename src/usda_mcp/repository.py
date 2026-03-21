@@ -66,18 +66,43 @@ def _food_match_sort_key(query: str, description: str) -> tuple[int, int, str]:
     normalized_description = _normalize(description)
     variants = _query_variants(query)
     description_words = normalized_description.split()
+    penalty = _description_penalty(normalized_query, normalized_description)
 
     if normalized_description in variants:
-        return (0, len(normalized_description), normalized_description)
-    if any(normalized_description.startswith(variant + " ") for variant in variants):
-        return (1, len(normalized_description), normalized_description)
+        return (0, penalty, normalized_description)
     if description_words and description_words[0] in variants:
-        return (2, len(normalized_description), normalized_description)
+        return (1, penalty, normalized_description)
+    if any(normalized_description.startswith(variant + " ") for variant in variants):
+        return (2, penalty, normalized_description)
     if any(f" {variant} " in f" {normalized_description} " for variant in variants):
-        return (3, len(normalized_description), normalized_description)
+        return (3, penalty, normalized_description)
     if normalized_query in normalized_description:
-        return (4, len(normalized_description), normalized_description)
-    return (5, len(normalized_description), normalized_description)
+        return (4, penalty, normalized_description)
+    return (5, penalty, normalized_description)
+
+
+def _description_penalty(normalized_query: str, normalized_description: str) -> int:
+    penalty = 0
+    penalty_terms = {
+        "juice": 3,
+        "concentrate": 3,
+        "refrigerated": 2,
+        "pulp": 2,
+        "pepper": 4,
+        "peppers": 4,
+        "bell": 2,
+        "canned": 2,
+        "frozen": 2,
+        "cooked": 2,
+        "fried": 2,
+        "dried": 2,
+    }
+    for term, value in penalty_terms.items():
+        if term in normalized_description and term not in normalized_query:
+            penalty += value
+    if "raw" in normalized_description:
+        penalty -= 1
+    return penalty
 
 
 @dataclass

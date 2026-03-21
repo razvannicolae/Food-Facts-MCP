@@ -66,6 +66,17 @@ class FakeUSDAAPIClient:
                 ],
                 "foodPortions": [],
             },
+            270: {
+                "fdcId": 270,
+                "description": "Orange juice, no pulp, not fortified, from concentrate, refrigerated",
+                "dataType": "Foundation",
+                "foodCategory": "Fruits and Fruit Juices",
+                "publicationDate": "2021-10-28",
+                "foodNutrients": [
+                    {"nutrient": {"id": 1092, "number": "306", "name": "Potassium, K", "unitName": "mg"}, "amount": 179.5},
+                ],
+                "foodPortions": [],
+            },
         }
 
     def search_foods(self, query: str, *, page_size: int = 10, page_number: int = 1, data_types=None):
