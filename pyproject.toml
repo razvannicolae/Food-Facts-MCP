@@ -3,14 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "usda-foundation-mini"
+name = "usda-fooddata-mcp"
 version = "0.1.0"
-description = "Mini USDA FoodData Central Foundation Foods MCP server"
+description = "USDA FoodData Central API MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
 
 [project.scripts]
-usda-mini-build = "usda_mcp.builder:main"
 usda-mini-demo = "usda_mcp.demo:main"
 usda-mini-server = "usda_mcp.server:main"
 

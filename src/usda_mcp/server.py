@@ -6,9 +6,8 @@ import sys
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -30,17 +29,17 @@ DEFAULT_ALLOWED_ORIGIN_HOSTS = {
 TOOLS = [
     {
         "name": "search_foods",
-        "description": "Search USDA foods by description. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
+        "description": "Search USDA foods by description using the live USDA FoodData Central API.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Food name or phrase to search for."},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 5},
                 "source": {
                     "type": "string",
-                    "enum": ["local", "api"],
-                    "default": "local",
-                    "description": "Use the local SQLite subset or the live USDA API.",
+                    "enum": ["api"],
+                    "default": "api",
+                    "description": "This server is API-only and always uses the live USDA API.",
                 },
                 "data_types": {
                     "type": "array",
@@ -53,7 +52,7 @@ TOOLS = [
     },
     {
         "name": "get_food_nutrients",
-        "description": "Return core nutrient values for a USDA food. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
+        "description": "Return core nutrient values for a USDA food using the live USDA FoodData Central API.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -65,9 +64,9 @@ TOOLS = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["local", "api"],
-                    "default": "local",
-                    "description": "Use the local SQLite subset or the live USDA API.",
+                    "enum": ["api"],
+                    "default": "api",
+                    "description": "This server is API-only and always uses the live USDA API.",
                 },
                 "data_types": {
                     "type": "array",
@@ -80,7 +79,7 @@ TOOLS = [
     },
     {
         "name": "compare_foods",
-        "description": "Compare a nutrient value between two USDA foods. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
+        "description": "Compare a nutrient value between two USDA foods using the live USDA FoodData Central API.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -89,9 +88,9 @@ TOOLS = [
                 "nutrient": {"type": "string"},
                 "source": {
                     "type": "string",
-                    "enum": ["local", "api"],
-                    "default": "local",
-                    "description": "Use the local SQLite subset or the live USDA API.",
+                    "enum": ["api"],
+                    "default": "api",
+                    "description": "This server is API-only and always uses the live USDA API.",
                 },
                 "data_types": {
                     "type": "array",
@@ -104,7 +103,7 @@ TOOLS = [
     },
     {
         "name": "list_foods_by_nutrient",
-        "description": "Rank foods in the local Foundation subset by a given nutrient amount per 100g.",
+        "description": "Reserved for future API-wide ranking support. Not currently implemented.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -112,9 +111,9 @@ TOOLS = [
                 "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
                 "source": {
                     "type": "string",
-                    "enum": ["local", "api"],
-                    "default": "local",
-                    "description": "API mode is not supported for global ranking in this mini build.",
+                    "enum": ["api"],
+                    "default": "api",
+                    "description": "This server is API-only.",
                 },
             },
             "required": ["nutrient"],
@@ -122,16 +121,16 @@ TOOLS = [
     },
     {
         "name": "get_food_source_metadata",
-        "description": "Return source and citation metadata for a USDA food. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
+        "description": "Return source and citation metadata for a USDA food using the live USDA FoodData Central API.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "food_query": {"type": "string"},
                 "source": {
                     "type": "string",
-                    "enum": ["local", "api"],
-                    "default": "local",
-                    "description": "Use the local SQLite subset or the live USDA API.",
+                    "enum": ["api"],
+                    "default": "api",
+                    "description": "This server is API-only and always uses the live USDA API.",
                 },
                 "data_types": {
                     "type": "array",
@@ -149,7 +148,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 5},
                 "data_types": {
                     "type": "array",
                     "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
@@ -258,13 +257,15 @@ def write_message(message: dict[str, Any]) -> None:
 
 @dataclass
 class MCPApplication:
-    db_path: Path
     endpoint: str = "/mcp"
     allowed_origin_hosts: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWED_ORIGIN_HOSTS))
     sessions: dict[str, str] = field(default_factory=dict)
+    repo_factory: Callable[[], FoodRepository] | None = None
 
     def _open_repo(self) -> FoodRepository:
-        return FoodRepository(self.db_path)
+        if self.repo_factory is not None:
+            return self.repo_factory()
+        return FoodRepository()
 
     def handle_jsonrpc(
         self,
@@ -328,13 +329,12 @@ class MCPApplication:
         return error(request_id, -32601, f"Unknown method '{method}'."), session_id
 
     def _invoke_tool(self, repo: FoodRepository, name: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
-        source = self._pick_source(repo, arguments)
         data_types = arguments.get("data_types")
         if name == "search_foods":
             return repo.search_foods(
                 arguments["query"],
                 int(arguments.get("limit", 10)),
-                source=source,
+                source="api",
                 data_types=data_types,
             )
         if name == "search_foods_api":
@@ -348,7 +348,7 @@ class MCPApplication:
             return repo.get_food_nutrients(
                 arguments["food_query"],
                 arguments.get("nutrients"),
-                source=source,
+                source="api",
                 data_types=data_types,
             )
         if name == "get_food_nutrients_api":
@@ -363,7 +363,7 @@ class MCPApplication:
                 arguments["food_a"],
                 arguments["food_b"],
                 arguments["nutrient"],
-                source=source,
+                source="api",
                 data_types=data_types,
             )
         if name == "compare_foods_api":
@@ -378,12 +378,12 @@ class MCPApplication:
             return repo.list_foods_by_nutrient(
                 arguments["nutrient"],
                 int(arguments.get("limit", 10)),
-                source=source,
+                source="api",
             )
         if name == "get_food_source_metadata":
             return repo.get_food_source_metadata(
                 arguments["food_query"],
-                source=source,
+                source="api",
                 data_types=data_types,
             )
         if name == "get_food_source_metadata_api":
@@ -398,21 +398,10 @@ class MCPApplication:
                 "notes": [
                     "Survey is the USDA API data type corresponding to FNDDS.",
                     "Experimental is exposed as a supported API option in this server.",
-                    "Foundation is also available locally in the SQLite subset.",
+                    "This server uses the live USDA API only.",
                 ],
             }
         raise ValueError(f"Unknown tool '{name}'.")
-
-    @staticmethod
-    def _pick_source(repo: FoodRepository, arguments: dict[str, Any]) -> str:
-        requested = arguments.get("source")
-        if requested in {"local", "api"}:
-            return requested
-        if arguments.get("data_types"):
-            return "api"
-        if not repo.db_path.exists() and os.environ.get("USDA_API_KEY"):
-            return "api"
-        return "local"
 
     def validate_session(self, session_id: str | None, method: str | None) -> tuple[bool, str | None]:
         if method == "initialize":
@@ -656,8 +645,7 @@ def run_http_server(app: MCPApplication, host: str, port: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a mini USDA Foundation Foods MCP server.")
-    parser.add_argument("--db-path", type=Path, default=Path("data/derived/usda_foundation_mini.sqlite"))
+    parser = argparse.ArgumentParser(description="Run a USDA FoodData Central API MCP server.")
     parser.add_argument(
         "--transport",
         choices=("stdio", "http"),
@@ -681,7 +669,7 @@ def main() -> None:
 
     allowed_origins = set(DEFAULT_ALLOWED_ORIGIN_HOSTS)
     allowed_origins.update(args.allow_origin_host)
-    app = MCPApplication(db_path=args.db_path, endpoint=args.endpoint, allowed_origin_hosts=allowed_origins)
+    app = MCPApplication(endpoint=args.endpoint, allowed_origin_hosts=allowed_origins)
 
     if args.transport == "http":
         run_http_server(app, host=args.host, port=args.port)

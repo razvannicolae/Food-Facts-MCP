@@ -129,6 +129,8 @@ class APIRepositoryTests(unittest.TestCase):
         result = repo.get_food_nutrients("banana", nutrients=["potassium"], source="api")
         self.assertEqual(result["food"]["fdc_id"], 100)
         self.assertEqual(result["nutrients"][0]["name"], "Potassium, K")
+        self.assertGreaterEqual(len(result["candidate_matches"]), 2)
+        self.assertEqual(result["candidate_matches"][0]["description"], "Banana, raw")
 
     def test_compare_foods_api_uses_live_details(self) -> None:
         repo = FoodRepository(api_client=FakeUSDAAPIClient())
@@ -146,6 +148,8 @@ class APIRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(result["food_a"]["description"], "Banana, raw")
         self.assertEqual(result["food_b"]["description"], "Oranges, raw, navels")
+        self.assertEqual(result["food_a_candidates"][0]["description"], "Banana, raw")
+        self.assertEqual(result["food_b_candidates"][0]["description"], "Oranges, raw, navels")
 
     def test_compare_foods_api_falls_back_to_search_row_when_best_detail_fails(self) -> None:
         repo = FoodRepository(api_client=FlakyDetailUSDAAPIClient())
@@ -165,6 +169,12 @@ class APIRepositoryTests(unittest.TestCase):
     def test_available_api_data_types_includes_experimental(self) -> None:
         repo = FoodRepository(api_client=FakeUSDAAPIClient())
         self.assertIn("Experimental", repo.available_api_data_types())
+
+    def test_get_food_source_metadata_includes_candidate_matches(self) -> None:
+        repo = FoodRepository(api_client=FakeUSDAAPIClient())
+        result = repo.get_food_source_metadata("orange", data_types=["Foundation"])
+        self.assertGreaterEqual(len(result["candidate_matches"]), 3)
+        self.assertEqual(result["candidate_matches"][0]["description"], "Oranges, raw, navels")
 
 
 if __name__ == "__main__":

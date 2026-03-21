@@ -1,28 +1,19 @@
 from __future__ import annotations
 
 import json
-import tempfile
 import threading
 import unittest
 import urllib.request
-from pathlib import Path
 
-from usda_mcp.builder import build_database
+from usda_mcp.repository import FoodRepository
 from usda_mcp.server import MCPApplication, create_http_server
-
-
-ROOT = Path(__file__).resolve().parents[1]
-ZIP_PATH = ROOT / "data/raw/FoodData_Central_foundation_food_json_2025-12-18.zip"
+from tests.test_api_repository import FakeUSDAAPIClient
 
 
 class HttpServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.temp_dir = tempfile.TemporaryDirectory()
-        cls.db_path = Path(cls.temp_dir.name) / "mini.sqlite"
-        build_database(ZIP_PATH, cls.db_path)
-
-        cls.app = MCPApplication(db_path=cls.db_path)
+        cls.app = MCPApplication(repo_factory=lambda: FoodRepository(api_client=FakeUSDAAPIClient()))
         cls.server = create_http_server(cls.app, host="127.0.0.1", port=0)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
@@ -33,7 +24,6 @@ class HttpServerTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join(timeout=5)
-        cls.temp_dir.cleanup()
 
     def test_initialize_and_tool_list_over_http(self) -> None:
         initialize_request = urllib.request.Request(
