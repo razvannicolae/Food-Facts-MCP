@@ -527,7 +527,7 @@ def _parse_serving(serving: dict) -> dict:
 
 def search_fatsecret_foods(
     query: str,
-    max_results: int = 20,
+    max_results: int = 3,
     page_number: int = 0,
 ) -> dict:
     cache = get_cache()
@@ -551,7 +551,7 @@ def search_fatsecret_foods(
         desc = f.get("food_description", "")
         parsed = _parse_food_description(desc)
         results.append({
-            "foodId": f.get("food_id"),
+            "foodId": str(f.get("food_id", "")),
             "foodName": f.get("food_name"),
             "foodType": f.get("food_type"),
             "brandName": f.get("brand_name"),
@@ -580,13 +580,14 @@ def search_fatsecret_foods(
 # Tool 10 — get_fatsecret_food
 # ---------------------------------------------------------------------------
 
-def get_fatsecret_food(food_id: str) -> dict:
+def get_fatsecret_food(food_id: int | str) -> dict:
+    food_id = str(food_id)
     cache = get_cache()
-    key = FoodCache.make_key("get_fatsecret_food", food_id=str(food_id))
+    key = FoodCache.make_key("get_fatsecret_food", food_id=food_id)
     if cache and (hit := cache.get("fatsecret", key)):
         return hit
 
-    raw = _get_fs().get_food(food_id=str(food_id))
+    raw = _get_fs().get_food(food_id=food_id)
     food = raw.get("food", {})
 
     if not food:

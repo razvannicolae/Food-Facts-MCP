@@ -210,7 +210,7 @@ def get_food_citation(fdc_id: int) -> dict:
 @mcp.tool()
 def search_fatsecret_foods(
     query: str,
-    max_results: int = 20,
+    max_results: int = 3,
     page_number: int = 0,
 ) -> dict:
     """Search the FatSecret food database — strong coverage of branded and restaurant foods.
@@ -229,7 +229,7 @@ def search_fatsecret_foods(
 
 
 @mcp.tool()
-def get_fatsecret_food(food_id: str) -> dict:
+def get_fatsecret_food(food_id: int | str) -> dict:
     """Get full nutrition details for a FatSecret food by its food ID.
 
     Returns all available servings with a complete nutrient breakdown:
