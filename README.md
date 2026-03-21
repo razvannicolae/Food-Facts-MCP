@@ -30,7 +30,7 @@ Then it exposes that data through these MCP tools:
 
 - `src/usda_mcp/builder.py`: ingests the USDA zip into SQLite
 - `src/usda_mcp/repository.py`: query layer for foods and nutrients
-- `src/usda_mcp/server.py`: minimal stdio MCP server
+- `src/usda_mcp/server.py`: stdio and HTTP MCP server
 - `src/usda_mcp/demo.py`: prints a few sample queries
 - `tests/test_repository.py`: basic integration tests
 
@@ -73,11 +73,25 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 ## MCP Server
 
-Run the stdio MCP server with:
+Run the local stdio MCP server with:
 
 ```bash
 PYTHONPATH=src python3 -m usda_mcp.server
 ```
+
+Run the HTTP MCP endpoint with:
+
+```bash
+PYTHONPATH=src python3 -m usda_mcp.server --transport http --host 127.0.0.1 --port 8000
+```
+
+That exposes:
+
+`http://127.0.0.1:8000/mcp`
+
+There is also a small health route at:
+
+`http://127.0.0.1:8000/`
 
 If you prefer package scripts:
 
@@ -87,6 +101,60 @@ usda-mini-build
 usda-mini-demo
 usda-mini-server
 ```
+
+## Expose It Publicly For ChatGPT
+
+ChatGPT Apps expects a public HTTPS MCP URL, so for local development you can tunnel the local HTTP server.
+
+### Option 1: `ngrok`
+
+Start the HTTP MCP server:
+
+```bash
+PYTHONPATH=src python3 -m usda_mcp.server --transport http --host 127.0.0.1 --port 8000 --allow-origin-host your-ngrok-host.ngrok-free.app
+```
+
+In another terminal:
+
+```bash
+ngrok http 8000
+```
+
+Use the HTTPS forwarding URL from `ngrok`, and point ChatGPT to:
+
+`https://your-ngrok-host.ngrok-free.app/mcp`
+
+### Option 2: `cloudflared`
+
+Start the HTTP MCP server:
+
+```bash
+PYTHONPATH=src python3 -m usda_mcp.server --transport http --host 127.0.0.1 --port 8000 --allow-origin-host your-tunnel-host.trycloudflare.com
+```
+
+In another terminal:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+
+Use the HTTPS tunnel URL and append `/mcp`.
+
+### Important note
+
+The server validates the `Origin` header in HTTP mode. If your public tunnel uses a host that is not already allowed, add it with:
+
+```bash
+--allow-origin-host your-public-hostname
+```
+
+The default allowlist already includes:
+
+- `localhost`
+- `127.0.0.1`
+- `chat.openai.com`
+- `chatgpt.com`
+- `www.chatgpt.com`
 
 ## Example Use Cases
 
