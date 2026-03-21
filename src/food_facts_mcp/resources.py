@@ -109,7 +109,7 @@ def get_server_metadata() -> dict:
                 "apiKeyStatus": "configured" if configured else "using DEMO_KEY (limited)",
             },
         },
-        "tools": 8,
+        "tools": 11,
         "resources": 4,
         "prompts": 4,
     }

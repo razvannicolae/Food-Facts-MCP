@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .cache import FoodCache, get_cache
 from .citations import (
     citation_from_food,
     format_apa_citation,
@@ -36,6 +37,13 @@ def search_foods(
     page_size: int = 25,
     page_number: int = 1,
 ) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("search_foods", query=query,
+                             data_type=sorted(data_type) if data_type else None,
+                             brand_owner=brand_owner, page_size=page_size,
+                             page_number=page_number)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     result = _get_fdc().search_foods(
         query=query,
         data_type=data_type,
@@ -44,7 +52,7 @@ def search_foods(
         page_number=page_number,
     )
     foods = result.get("foods", [])
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "totalHits": result.get("totalHits", 0),
         "currentPage": result.get("currentPage", 1),
@@ -60,6 +68,9 @@ def search_foods(
             for f in foods
         ],
     }
+    if cache:
+        cache.set("usda_fdc", "search_foods", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +82,12 @@ def get_food(
     nutrients: Optional[list[int]] = None,
     format: Optional[str] = None,
 ) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("get_food", fdc_id=fdc_id,
+                             nutrients=sorted(nutrients) if nutrients else None,
+                             format=format)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     food = _get_fdc().get_food(fdc_id=fdc_id, nutrients=nutrients, format=format)
 
     flat_nutrients = []
@@ -85,7 +102,7 @@ def get_food(
             "unit": info.get("unitName") or n.get("unitName", ""),
         })
 
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "fdcId": food.get("fdcId"),
         "description": food.get("description"),
@@ -103,6 +120,9 @@ def get_food(
         ),
         "citation": citation_from_food(food),
     }
+    if cache:
+        cache.set("usda_fdc", "get_food", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +133,13 @@ def get_multiple_foods(
     fdc_ids: list[int],
     nutrients: Optional[list[int]] = None,
 ) -> list[dict]:
+    cache = get_cache()
+    key = FoodCache.make_key("get_multiple_foods", fdc_ids=sorted(fdc_ids),
+                             nutrients=sorted(nutrients) if nutrients else None)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     foods = _get_fdc().get_multiple_foods(fdc_ids=fdc_ids, nutrients=nutrients)
-    return [
+    response = [
         {
             "source": "USDA FoodData Central",
             "fdcId": f.get("fdcId"),
@@ -127,6 +152,9 @@ def get_multiple_foods(
         }
         for f in (foods if isinstance(foods, list) else [])
     ]
+    if cache:
+        cache.set("usda_fdc", "get_multiple_foods", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +162,10 @@ def get_multiple_foods(
 # ---------------------------------------------------------------------------
 
 def get_food_nutrients(fdc_id: int) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("get_food_nutrients", fdc_id=fdc_id)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     food = _get_fdc().get_food(fdc_id=fdc_id)
 
     rows = []
@@ -156,7 +188,7 @@ def get_food_nutrients(fdc_id: int) -> dict:
 
     rows.sort(key=_sort_key)
 
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "fdcId": food.get("fdcId"),
         "description": food.get("description"),
@@ -166,6 +198,9 @@ def get_food_nutrients(fdc_id: int) -> dict:
         "nutrients": rows,
         "citation": citation_from_food(food),
     }
+    if cache:
+        cache.set("usda_fdc", "get_food_nutrients", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +208,12 @@ def get_food_nutrients(fdc_id: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def compare_foods(fdc_id_a: int, fdc_id_b: int) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("compare_foods",
+                             fdc_id_a=min(fdc_id_a, fdc_id_b),
+                             fdc_id_b=max(fdc_id_a, fdc_id_b))
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     food_a = _get_fdc().get_food(fdc_id=fdc_id_a)
     food_b = _get_fdc().get_food(fdc_id=fdc_id_b)
 
@@ -215,7 +256,7 @@ def compare_foods(fdc_id_a: int, fdc_id_b: int) -> dict:
             "difference_a_minus_b": difference, "higher": higher,
         })
 
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "foodA": {"fdcId": food_a.get("fdcId"), "description": food_a.get("description"),
                   "dataType": food_a.get("dataType"), "citation": citation_from_food(food_a)},
@@ -223,6 +264,9 @@ def compare_foods(fdc_id_a: int, fdc_id_b: int) -> dict:
                   "dataType": food_b.get("dataType"), "citation": citation_from_food(food_b)},
         "comparison": comparison,
     }
+    if cache:
+        cache.set("usda_fdc", "compare_foods", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -236,11 +280,18 @@ def list_foods(
     sort_by: Optional[str] = None,
     sort_order: Optional[str] = None,
 ) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("list_foods",
+                             data_type=sorted(data_type) if data_type else None,
+                             page_size=page_size, page_number=page_number,
+                             sort_by=sort_by, sort_order=sort_order)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     foods = _get_fdc().list_foods(
         data_type=data_type, page_size=page_size, page_number=page_number,
         sort_by=sort_by, sort_order=sort_order,
     )
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "pageNumber": page_number,
         "pageSize": page_size,
@@ -251,6 +302,9 @@ def list_foods(
             for f in (foods if isinstance(foods, list) else [])
         ],
     }
+    if cache:
+        cache.set("usda_fdc", "list_foods", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +360,13 @@ def list_foods_by_nutrient(
     top_n: int = 10,
     data_type: Optional[list[str]] = None,
 ) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("list_foods_by_nutrient",
+                             nutrient_name=nutrient_name.lower(),
+                             top_n=top_n,
+                             data_type=sorted(data_type) if data_type else None)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     whole_foods_mode = data_type is not None and set(data_type).issubset(
         {"Foundation", "SR Legacy"}
     )
@@ -337,7 +398,7 @@ def list_foods_by_nutrient(
 
     scored.sort(key=lambda x: float(x["nutrientAmount"] or 0), reverse=True)
 
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "nutrient": nutrient_name,
         "searchQuery": search_query,
@@ -345,6 +406,9 @@ def list_foods_by_nutrient(
         "topFoods": scored[:top_n],
         "totalSearched": len(foods),
     }
+    if cache:
+        cache.set("usda_fdc", "list_foods_by_nutrient", key, response)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +416,12 @@ def list_foods_by_nutrient(
 # ---------------------------------------------------------------------------
 
 def get_food_citation(fdc_id: int) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("get_food_citation", fdc_id=fdc_id)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit
     food = _get_fdc().get_food(fdc_id=fdc_id, format="abridged")
-    return {
+    response = {
         "source": "USDA FoodData Central",
         "fdcId": food.get("fdcId"),
         "description": food.get("description"),
@@ -366,3 +434,6 @@ def get_food_citation(fdc_id: int) -> dict:
         "apa": format_apa_citation(food),
         "mla": format_mla_citation(food),
     }
+    if cache:
+        cache.set("usda_fdc", "get_food_citation", key, response)
+    return response

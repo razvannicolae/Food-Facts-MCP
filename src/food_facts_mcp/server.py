@@ -1,6 +1,7 @@
 """Food Facts MCP Server.
 
 USDA FoodData Central — 8 tools, 4 resources, 4 prompts.
+Cache management — 3 tools (get_cache_stats, list_cached_foods, clear_cache).
 
 Transport options (--transport flag):
   stdio               — default, used by Claude Desktop / Claude Code
@@ -21,6 +22,7 @@ from mcp.server.fastmcp import FastMCP
 from . import tools as _tools
 from . import resources as _resources
 from . import prompts as _prompts
+from .cache import get_cache
 from .resources import NUTRIENT_REFERENCE, SOURCES_INFO
 
 mcp = FastMCP(
@@ -193,6 +195,75 @@ def get_food_citation(fdc_id: int) -> dict:
         fdc_id: USDA FoodData Central ID
     """
     return _tools.get_food_citation(fdc_id=fdc_id)
+
+
+# ===========================================================================
+# Cache management tools
+# ===========================================================================
+
+
+@mcp.tool()
+def get_cache_stats() -> dict:
+    """Return cache health statistics.
+
+    Shows total entries, DB size, breakdown by source and tool name,
+    whether caching is enabled, and the configured TTL.
+    """
+    import os
+    cache = get_cache()
+    enabled = os.environ.get("CACHE_ENABLED", "true").lower() not in ("false", "0", "no")
+    ttl = os.environ.get("CACHE_TTL_DAYS")
+    if not enabled or cache is None:
+        return {"cacheEnabled": False, "totalEntries": 0, "dbSizeKb": 0,
+                "bySource": {}, "byTool": {}, "ttlDays": None}
+    stats = cache.stats()
+    return {**stats, "cacheEnabled": True, "ttlDays": int(ttl) if ttl else None}
+
+
+@mcp.tool()
+def list_cached_foods(
+    source: str | None = None,
+    query: str | None = None,
+    limit: int = 50,
+) -> dict:
+    """Browse the food index — shows which foods are already cached.
+
+    Args:
+        source: Filter by data source (e.g. "usda_fdc")
+        query: Case-insensitive substring filter on food description
+        limit: Maximum number of results to return (default 50)
+    """
+    cache = get_cache()
+    if cache is None:
+        return {"foods": [], "total": 0, "cacheEnabled": False}
+    foods = cache.list_foods(source=source, query=query, limit=limit)
+    return {"foods": foods, "total": len(foods), "cacheEnabled": True}
+
+
+@mcp.tool()
+def clear_cache(
+    source: str | None = None,
+    tool_name: str | None = None,
+) -> dict:
+    """Clear cached responses, optionally filtered by source or tool name.
+
+    Without arguments, clears the entire cache.
+
+    Args:
+        source: Only clear entries for this source (e.g. "usda_fdc")
+        tool_name: Only clear entries for this tool (e.g. "search_foods")
+    """
+    cache = get_cache()
+    if cache is None:
+        return {"cleared": 0, "message": "Cache is disabled"}
+    count = cache.clear(source=source, tool_name=tool_name)
+    parts = []
+    if source:
+        parts.append(f"source={source}")
+    if tool_name:
+        parts.append(f"tool={tool_name}")
+    scope = ", ".join(parts) if parts else "all entries"
+    return {"cleared": count, "message": f"Cleared {count} entries ({scope})"}
 
 
 # ===========================================================================

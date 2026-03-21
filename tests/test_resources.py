@@ -68,7 +68,7 @@ def test_get_server_metadata():
     from food_facts_mcp.resources import get_server_metadata
     meta = get_server_metadata()
     assert meta["name"] == "Food Facts MCP"
-    assert meta["tools"] == 8
+    assert meta["tools"] == 11
     assert "usdaFDC" in meta["dataSources"]
 
 
