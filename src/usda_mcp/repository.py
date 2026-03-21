@@ -388,14 +388,44 @@ class FoodRepository:
             raise ValueError(f"No USDA API food matched '{query}'.")
 
         if nutrient_name is None:
-            return client.get_food_details(foods[0]["fdcId"])
+            return self._fetch_first_detail_candidate(client, foods, query)
 
+        detail_errors = []
         for item in foods:
-            detail = client.get_food_details(item["fdcId"])
+            try:
+                detail = client.get_food_details(item["fdcId"])
+            except ValueError as exc:
+                detail_errors.append(str(exc))
+                continue
             if self._api_food_has_nutrient(detail, nutrient_name):
                 return detail
 
+        if detail_errors:
+            raise ValueError(
+                f"No USDA API food matched '{query}' with nutrient '{nutrient_name}'. "
+                f"Detail lookup errors included: {detail_errors[0]}"
+            )
         raise ValueError(f"No USDA API food matched '{query}' with nutrient '{nutrient_name}'.")
+
+    @staticmethod
+    def _fetch_first_detail_candidate(
+        client: USDAAPIClient,
+        foods: list[dict[str, Any]],
+        query: str,
+    ) -> dict[str, Any]:
+        detail_errors = []
+        for item in foods:
+            try:
+                return client.get_food_details(item["fdcId"])
+            except ValueError as exc:
+                detail_errors.append(str(exc))
+                continue
+        if detail_errors:
+            raise ValueError(
+                f"USDA API search found matches for '{query}', but all detail lookups failed. "
+                f"First error: {detail_errors[0]}"
+            )
+        raise ValueError(f"No USDA API food matched '{query}'.")
 
     def _resolve_nutrient_name_local(self, query: str) -> str:
         normalized = _normalize(query)

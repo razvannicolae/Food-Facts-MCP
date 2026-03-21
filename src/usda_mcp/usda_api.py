@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -86,8 +87,19 @@ class USDAAPIClient:
             body = json.dumps(payload).encode("utf-8")
 
         request = Request(url, data=body, headers=headers, method=method)
-        with urlopen(request) as response:  # noqa: S310 - official USDA API endpoint
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(request) as response:  # noqa: S310 - official USDA API endpoint
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            message = exc.reason
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+                message = payload.get("error", {}).get("message") or payload.get("message") or message
+            except Exception:
+                pass
+            raise ValueError(f"USDA API request failed with HTTP {exc.code}: {message}") from exc
+        except URLError as exc:
+            raise ValueError(f"USDA API request failed: {exc.reason}") from exc
 
 
 def normalize_api_data_types(data_types: list[str] | None) -> list[str] | None:
