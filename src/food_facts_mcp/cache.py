@@ -119,23 +119,27 @@ class FoodCache:
         self._conn.commit()
 
     def _index_food(self, source: str, data, first_cached: str) -> None:
-        """Index food items from a tool response into food_index."""
+        """Index food items from a tool response into food_index.
+
+        Only indexes items whose fdcId is an integer — FatSecret string IDs
+        are intentionally excluded to avoid SQLite INTEGER PRIMARY KEY mismatch.
+        """
         items: list[dict] = []
         if isinstance(data, dict):
             fdc_id = data.get("fdcId")
-            if fdc_id:
+            if isinstance(fdc_id, int):
                 items.append(data)
             # list-style responses (compare_foods has foodA/foodB)
             for sub_key in ("foodA", "foodB"):
                 sub = data.get(sub_key)
-                if isinstance(sub, dict) and sub.get("fdcId"):
+                if isinstance(sub, dict) and isinstance(sub.get("fdcId"), int):
                     items.append(sub)
         elif isinstance(data, list):
-            items = [x for x in data if isinstance(x, dict) and x.get("fdcId")]
+            items = [x for x in data if isinstance(x, dict) and isinstance(x.get("fdcId"), int)]
 
         for item in items:
             fdc_id = item.get("fdcId")
-            if not fdc_id:
+            if not isinstance(fdc_id, int):
                 continue
             self._conn.execute(
                 """INSERT INTO food_index (fdc_id, source, description, data_type, first_cached)

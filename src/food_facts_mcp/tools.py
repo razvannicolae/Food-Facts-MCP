@@ -614,10 +614,6 @@ def get_fatsecret_food(food_id: int) -> dict:
             "foodId": food.get("food_id"),
             "url": food.get("food_url"),
         },
-        # for food_index
-        "fdcId": f"fs:{food.get('food_id')}",
-        "description": food.get("food_name"),
-        "dataType": food.get("food_type", "Brand"),
     }
     if cache:
         cache.set("fatsecret", "get_fatsecret_food", key, response)
