@@ -8,6 +8,7 @@ It is intentionally scoped as a mini build:
 - Python standard library only
 - SQLite-backed
 - simple MCP tools for search, nutrient lookup, comparisons, and citation metadata
+- optional live USDA API support for Branded, SR Legacy, FNDDS, and other API-exposed data types
 
 ## What It Does
 
@@ -26,11 +27,14 @@ Then it exposes that data through these MCP tools:
 - `list_foods_by_nutrient`
 - `get_food_source_metadata`
 
+The first four work against the local Foundation subset by default. `search_foods`, `get_food_nutrients`, `compare_foods`, and `get_food_source_metadata` can also use the live USDA API by passing `source="api"` and setting `USDA_API_KEY`.
+
 ## Repo Layout
 
 - `src/usda_mcp/builder.py`: ingests the USDA zip into SQLite
 - `src/usda_mcp/repository.py`: query layer for foods and nutrients
 - `src/usda_mcp/server.py`: stdio and HTTP MCP server
+- `src/usda_mcp/usda_api.py`: live USDA API client
 - `src/usda_mcp/demo.py`: prints a few sample queries
 - `tests/test_repository.py`: basic integration tests
 
@@ -70,6 +74,73 @@ PYTHONPATH=src python3 -m usda_mcp.demo
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
+
+## Live USDA API Mode
+
+This repo can also query the live USDA FoodData Central API instead of only the local Foundation subset.
+
+Important:
+
+- do not hardcode your USDA/data.gov API key in source code
+- set it in the environment instead
+- if you have pasted a real key into chat, docs, or a repo, rotate it
+
+### Set the API key
+
+macOS / Linux:
+
+```bash
+export USDA_API_KEY="your-real-key-here"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:USDA_API_KEY = "your-real-key-here"
+```
+
+### Example live queries
+
+Python:
+
+```python
+from usda_mcp.repository import FoodRepository
+
+with FoodRepository() as repo:
+    print(repo.search_foods("cheddar cheese", source="api", data_types=["Branded", "Foundation"]))
+    print(repo.get_food_nutrients("cheddar cheese", source="api", data_types=["Branded"]))
+```
+
+In MCP calls, you can pass:
+
+- `source: "api"`
+- `data_types: ["Branded"]` or `["Foundation", "SR Legacy"]`
+
+Example tool arguments for `search_foods`:
+
+```json
+{
+  "query": "cheddar cheese",
+  "source": "api",
+  "data_types": ["Branded", "Foundation"],
+  "limit": 5
+}
+```
+
+### Current API-backed scope
+
+Supported in API mode:
+
+- `search_foods`
+- `get_food_nutrients`
+- `compare_foods`
+- `get_food_source_metadata`
+
+Still local-only in this mini build:
+
+- `list_foods_by_nutrient`
+
+That last operation needs broader pagination and ranking logic to be accurate across the entire USDA API corpus.
 
 ## MCP Server
 

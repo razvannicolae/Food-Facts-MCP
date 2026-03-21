@@ -36,6 +36,11 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("food_a_value", result)
         self.assertIn("food_b_value", result)
 
+    def test_search_foods_local_metadata_works(self) -> None:
+        with FoodRepository(self.db_path) as repo:
+            result = repo.get_food_source_metadata("salmon")
+        self.assertEqual(result["citation"]["source"], "USDA FoodData Central")
+
 
 if __name__ == "__main__":
     unittest.main()

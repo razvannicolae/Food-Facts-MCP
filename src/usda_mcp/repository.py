@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from usda_mcp.usda_api import USDAAPIClient
 
 
 DEFAULT_DB_PATH = Path("data/derived/usda_foundation_mini.sqlite")
@@ -49,13 +51,13 @@ def _normalize(text: str) -> str:
 @dataclass
 class FoodRepository:
     db_path: Path = DEFAULT_DB_PATH
-
-    def __post_init__(self) -> None:
-        self.connection = sqlite3.connect(self.db_path)
-        self.connection.row_factory = sqlite3.Row
+    api_client: USDAAPIClient | None = None
+    connection: sqlite3.Connection | None = field(init=False, default=None)
 
     def close(self) -> None:
-        self.connection.close()
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
 
     def __enter__(self) -> "FoodRepository":
         return self
@@ -64,12 +66,23 @@ class FoodRepository:
         self.close()
 
     def metadata(self) -> dict[str, str]:
-        rows = self.connection.execute("SELECT key, value FROM metadata").fetchall()
+        rows = self._connection().execute("SELECT key, value FROM metadata").fetchall()
         return {row["key"]: row["value"] for row in rows}
 
-    def search_foods(self, query: str, limit: int = 10) -> dict[str, Any]:
+    def search_foods(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        source: str = "local",
+        data_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if source == "api":
+            client = self._require_api_client()
+            return self._search_foods_api(client, query, limit=limit, data_types=data_types)
+
         normalized = query.strip().lower()
-        rows = self.connection.execute(
+        rows = self._connection().execute(
             """
             SELECT fdc_id, description, data_type, food_category, publication_date
             FROM foods
@@ -96,12 +109,24 @@ class FoodRepository:
         self,
         food_query: str,
         nutrients: list[str] | None = None,
+        *,
+        source: str = "local",
+        data_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        nutrient_names = [self._resolve_nutrient_name(item) for item in (nutrients or DEFAULT_NUTRIENTS)]
+        if source == "api":
+            client = self._require_api_client()
+            return self._get_food_nutrients_api(
+                client,
+                food_query,
+                nutrients=nutrients,
+                data_types=data_types,
+            )
+
+        nutrient_names = [self._resolve_nutrient_name_local(item) for item in (nutrients or DEFAULT_NUTRIENTS)]
         preferred_nutrient = nutrient_names[0] if nutrients else None
-        food = self._resolve_food(food_query, preferred_nutrient)
+        food = self._resolve_food_local(food_query, preferred_nutrient)
         placeholders = ", ".join("?" for _ in nutrient_names)
-        rows = self.connection.execute(
+        rows = self._connection().execute(
             f"""
             SELECT nutrient_id, nutrient_number, nutrient_name, unit_name, amount, rank
             FROM nutrients
@@ -117,12 +142,24 @@ class FoodRepository:
             "missing_nutrients": [name for name in nutrient_names if name not in found_names],
         }
 
-    def compare_foods(self, food_a: str, food_b: str, nutrient: str) -> dict[str, Any]:
-        nutrient_name = self._resolve_nutrient_name(nutrient)
-        left = self._resolve_food(food_a, nutrient_name)
-        right = self._resolve_food(food_b, nutrient_name)
-        left_value = self._get_food_nutrient_value(left["fdc_id"], nutrient_name)
-        right_value = self._get_food_nutrient_value(right["fdc_id"], nutrient_name)
+    def compare_foods(
+        self,
+        food_a: str,
+        food_b: str,
+        nutrient: str,
+        *,
+        source: str = "local",
+        data_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if source == "api":
+            client = self._require_api_client()
+            return self._compare_foods_api(client, food_a, food_b, nutrient, data_types=data_types)
+
+        nutrient_name = self._resolve_nutrient_name_local(nutrient)
+        left = self._resolve_food_local(food_a, nutrient_name)
+        right = self._resolve_food_local(food_b, nutrient_name)
+        left_value = self._get_food_nutrient_value_local(left["fdc_id"], nutrient_name)
+        right_value = self._get_food_nutrient_value_local(right["fdc_id"], nutrient_name)
         winner = None
         if left_value["amount"] > right_value["amount"]:
             winner = left["description"]
@@ -138,9 +175,21 @@ class FoodRepository:
             "winner": winner,
         }
 
-    def list_foods_by_nutrient(self, nutrient: str, limit: int = 10) -> dict[str, Any]:
-        nutrient_name = self._resolve_nutrient_name(nutrient)
-        rows = self.connection.execute(
+    def list_foods_by_nutrient(
+        self,
+        nutrient: str,
+        limit: int = 10,
+        *,
+        source: str = "local",
+    ) -> dict[str, Any]:
+        if source == "api":
+            raise ValueError(
+                "Live USDA API mode does not support global nutrient ranking in this mini build. "
+                "Use search_foods + get_food_nutrients for API-backed queries."
+            )
+
+        nutrient_name = self._resolve_nutrient_name_local(nutrient)
+        rows = self._connection().execute(
             """
             SELECT foods.fdc_id, foods.description, foods.food_category, nutrients.amount, nutrients.unit_name
             FROM nutrients
@@ -166,22 +215,99 @@ class FoodRepository:
             "source": self.metadata(),
         }
 
-    def get_food_source_metadata(self, food_query: str) -> dict[str, Any]:
-        food = self._resolve_food(food_query)
+    def get_food_source_metadata(
+        self,
+        food_query: str,
+        *,
+        source: str = "local",
+        data_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if source == "api":
+            client = self._require_api_client()
+            food = self._resolve_food_api(client, food_query, data_types=data_types)
+            return self._api_food_with_citation(food)
+
+        food = self._resolve_food_local(food_query)
         return self._food_with_citation(food)
 
-    def _resolve_food(self, query: str, nutrient_name: str | None = None) -> sqlite3.Row:
+    def _search_foods_api(
+        self,
+        client: USDAAPIClient,
+        query: str,
+        *,
+        limit: int,
+        data_types: list[str] | None,
+    ) -> dict[str, Any]:
+        response = client.search_foods(query, page_size=limit, data_types=data_types)
+        return {
+            "query": query,
+            "results": [self._serialize_api_food(food) for food in response.get("foods", [])],
+            "source": self._api_source_metadata(data_types),
+            "total_hits": response.get("totalHits"),
+            "current_page": response.get("currentPage"),
+        }
+
+    def _get_food_nutrients_api(
+        self,
+        client: USDAAPIClient,
+        food_query: str,
+        *,
+        nutrients: list[str] | None,
+        data_types: list[str] | None,
+    ) -> dict[str, Any]:
+        nutrient_names = [self._resolve_nutrient_name_api(client, item) for item in (nutrients or DEFAULT_NUTRIENTS)]
+        preferred_nutrient = nutrient_names[0] if nutrients else None
+        food = self._resolve_food_api(client, food_query, nutrient_name=preferred_nutrient, data_types=data_types)
+        nutrient_rows = self._extract_api_nutrients(food)
+        selected = [row for row in nutrient_rows if row["name"] in nutrient_names]
+        found_names = {row["name"] for row in selected}
+        return {
+            "food": self._api_food_with_citation(food),
+            "nutrients": selected,
+            "missing_nutrients": [name for name in nutrient_names if name not in found_names],
+        }
+
+    def _compare_foods_api(
+        self,
+        client: USDAAPIClient,
+        food_a: str,
+        food_b: str,
+        nutrient: str,
+        *,
+        data_types: list[str] | None,
+    ) -> dict[str, Any]:
+        nutrient_name = self._resolve_nutrient_name_api(client, nutrient)
+        left = self._resolve_food_api(client, food_a, nutrient_name=nutrient_name, data_types=data_types)
+        right = self._resolve_food_api(client, food_b, nutrient_name=nutrient_name, data_types=data_types)
+        left_value = self._get_api_food_nutrient_value(left, nutrient_name)
+        right_value = self._get_api_food_nutrient_value(right, nutrient_name)
+        winner = None
+        if left_value["amount"] > right_value["amount"]:
+            winner = left.get("description")
+        elif right_value["amount"] > left_value["amount"]:
+            winner = right.get("description")
+        return {
+            "nutrient": nutrient_name,
+            "food_a": self._api_food_with_citation(left),
+            "food_b": self._api_food_with_citation(right),
+            "food_a_value": left_value,
+            "food_b_value": right_value,
+            "difference": round(left_value["amount"] - right_value["amount"], 4),
+            "winner": winner,
+        }
+
+    def _resolve_food_local(self, query: str, nutrient_name: str | None = None) -> sqlite3.Row:
         if query.isdigit():
-            row = self.connection.execute(
+            row = self._connection().execute(
                 "SELECT * FROM foods WHERE fdc_id = ?",
                 (int(query),),
             ).fetchone()
-            if row and (nutrient_name is None or self._food_has_nutrient(row["fdc_id"], nutrient_name)):
+            if row and (nutrient_name is None or self._food_has_nutrient_local(row["fdc_id"], nutrient_name)):
                 return row
 
         normalized = query.strip().lower()
         if nutrient_name is None:
-            row = self.connection.execute(
+            row = self._connection().execute(
                 """
                 SELECT *
                 FROM foods
@@ -199,7 +325,7 @@ class FoodRepository:
                 (normalized, normalized, normalized),
             ).fetchone()
         else:
-            row = self.connection.execute(
+            row = self._connection().execute(
                 """
                 SELECT foods.*
                 FROM foods
@@ -228,13 +354,41 @@ class FoodRepository:
             )
         return row
 
-    def _resolve_nutrient_name(self, query: str) -> str:
+    def _resolve_food_api(
+        self,
+        client: USDAAPIClient,
+        query: str,
+        *,
+        nutrient_name: str | None = None,
+        data_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if query.isdigit():
+            food = client.get_food_details(int(query))
+            if nutrient_name is None or self._api_food_has_nutrient(food, nutrient_name):
+                return food
+
+        response = client.search_foods(query, page_size=10, data_types=data_types)
+        foods = response.get("foods", [])
+        if not foods:
+            raise ValueError(f"No USDA API food matched '{query}'.")
+
+        if nutrient_name is None:
+            return client.get_food_details(foods[0]["fdcId"])
+
+        for item in foods:
+            detail = client.get_food_details(item["fdcId"])
+            if self._api_food_has_nutrient(detail, nutrient_name):
+                return detail
+
+        raise ValueError(f"No USDA API food matched '{query}' with nutrient '{nutrient_name}'.")
+
+    def _resolve_nutrient_name_local(self, query: str) -> str:
         normalized = _normalize(query)
         aliased = NUTRIENT_ALIASES.get(normalized)
         if aliased:
             return aliased
 
-        rows = self.connection.execute(
+        rows = self._connection().execute(
             "SELECT DISTINCT nutrient_name, COALESCE(rank, 999999) AS rank FROM nutrients"
         ).fetchall()
         candidates = []
@@ -251,8 +405,29 @@ class FoodRepository:
         candidates.sort()
         return candidates[0][2]
 
-    def _get_food_nutrient_value(self, food_id: int, nutrient_name: str) -> dict[str, Any]:
-        row = self.connection.execute(
+    def _resolve_nutrient_name_api(self, client: USDAAPIClient, query: str) -> str:
+        normalized = _normalize(query)
+        aliased = NUTRIENT_ALIASES.get(normalized)
+        if aliased:
+            return aliased
+
+        nutrient_names = client.search_nutrient_names(query)
+        candidates = []
+        for name in nutrient_names:
+            normalized_name = _normalize(name)
+            if normalized == normalized_name:
+                candidates.append((0, name))
+            elif normalized_name.startswith(normalized):
+                candidates.append((1, name))
+            elif normalized in normalized_name:
+                candidates.append((2, name))
+        if not candidates:
+            raise ValueError(f"No nutrient matched '{query}' in USDA API results.")
+        candidates.sort()
+        return candidates[0][1]
+
+    def _get_food_nutrient_value_local(self, food_id: int, nutrient_name: str) -> dict[str, Any]:
+        row = self._connection().execute(
             """
             SELECT nutrient_id, nutrient_number, nutrient_name, amount, unit_name
             FROM nutrients
@@ -264,8 +439,16 @@ class FoodRepository:
             raise ValueError(f"Food {food_id} does not contain '{nutrient_name}' in this USDA subset.")
         return self._serialize_nutrient_row(row)
 
-    def _food_has_nutrient(self, food_id: int, nutrient_name: str) -> bool:
-        row = self.connection.execute(
+    def _get_api_food_nutrient_value(self, food: dict[str, Any], nutrient_name: str) -> dict[str, Any]:
+        for nutrient in self._extract_api_nutrients(food):
+            if nutrient["name"] == nutrient_name:
+                return nutrient
+        raise ValueError(
+            f"Food {food.get('fdcId')} does not contain '{nutrient_name}' in the USDA API response."
+        )
+
+    def _food_has_nutrient_local(self, food_id: int, nutrient_name: str) -> bool:
+        row = self._connection().execute(
             """
             SELECT 1
             FROM nutrients
@@ -275,6 +458,9 @@ class FoodRepository:
             (food_id, nutrient_name),
         ).fetchone()
         return row is not None
+
+    def _api_food_has_nutrient(self, food: dict[str, Any], nutrient_name: str) -> bool:
+        return any(nutrient["name"] == nutrient_name for nutrient in self._extract_api_nutrients(food))
 
     def _food_with_citation(self, row: sqlite3.Row) -> dict[str, Any]:
         serialized = self._serialize_food_row(row)
@@ -290,6 +476,42 @@ class FoodRepository:
             "publication_date": row["publication_date"],
         }
         return serialized
+
+    def _api_food_with_citation(self, food: dict[str, Any]) -> dict[str, Any]:
+        serialized = self._serialize_api_food(food)
+        serialized["portions"] = food.get("foodPortions", [])
+        serialized["citation"] = {
+            "source": "USDA FoodData Central API",
+            "dataset": food.get("dataType") or "Multiple USDA data types",
+            "fdc_id": food.get("fdcId"),
+            "food_description": food.get("description"),
+            "publication_date": food.get("publicationDate"),
+            "data_type": food.get("dataType"),
+        }
+        return serialized
+
+    def _api_source_metadata(self, data_types: list[str] | None) -> dict[str, str]:
+        return {
+            "source_name": "USDA FoodData Central API",
+            "source_dataset": ", ".join(data_types) if data_types else "All USDA API data types",
+            "source_mode": "live_api",
+        }
+
+    def _connection(self) -> sqlite3.Connection:
+        if self.connection is None:
+            if not self.db_path.exists():
+                raise FileNotFoundError(
+                    f"Local USDA SQLite database not found at {self.db_path}. "
+                    "Build it first or use source='api' with USDA_API_KEY set."
+                )
+            self.connection = sqlite3.connect(self.db_path)
+            self.connection.row_factory = sqlite3.Row
+        return self.connection
+
+    def _require_api_client(self) -> USDAAPIClient:
+        if self.api_client is None:
+            self.api_client = USDAAPIClient.from_env()
+        return self.api_client
 
     @staticmethod
     def _serialize_food_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -310,3 +532,41 @@ class FoodRepository:
             "amount": row["amount"],
             "unit": row["unit_name"],
         }
+
+    @staticmethod
+    def _serialize_api_food(food: dict[str, Any]) -> dict[str, Any]:
+        category = food.get("foodCategory")
+        if isinstance(category, dict):
+            category = category.get("description")
+        return {
+            "fdc_id": food.get("fdcId"),
+            "description": food.get("description"),
+            "data_type": food.get("dataType"),
+            "food_category": category,
+            "publication_date": food.get("publicationDate"),
+            "brand_owner": food.get("brandOwner"),
+            "gtin_upc": food.get("gtinUpc"),
+        }
+
+    @staticmethod
+    def _extract_api_nutrients(food: dict[str, Any]) -> list[dict[str, Any]]:
+        results = []
+        for item in food.get("foodNutrients", []):
+            nutrient = item.get("nutrient") or {}
+            nutrient_id = nutrient.get("id") or item.get("nutrientId")
+            nutrient_number = nutrient.get("number") or item.get("number")
+            nutrient_name = nutrient.get("name") or item.get("nutrientName") or item.get("name")
+            unit_name = nutrient.get("unitName") or item.get("unitName")
+            amount = item.get("amount") or item.get("value")
+            if nutrient_name is None or amount is None:
+                continue
+            results.append(
+                {
+                    "nutrient_id": nutrient_id,
+                    "number": nutrient_number,
+                    "name": nutrient_name,
+                    "amount": amount,
+                    "unit": unit_name,
+                }
+            )
+        return results

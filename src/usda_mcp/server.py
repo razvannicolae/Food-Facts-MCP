@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -28,19 +29,30 @@ DEFAULT_ALLOWED_ORIGIN_HOSTS = {
 TOOLS = [
     {
         "name": "search_foods",
-        "description": "Search USDA Foundation Foods by description.",
+        "description": "Search USDA foods by description. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Food name or phrase to search for."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                "source": {
+                    "type": "string",
+                    "enum": ["local", "api"],
+                    "default": "local",
+                    "description": "Use the local SQLite subset or the live USDA API.",
+                },
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional USDA API data types like Branded, Foundation, SR Legacy, or Survey (FNDDS).",
+                },
             },
             "required": ["query"],
         },
     },
     {
         "name": "get_food_nutrients",
-        "description": "Return core nutrient values for a USDA Foundation food.",
+        "description": "Return core nutrient values for a USDA food. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -50,42 +62,81 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "Optional nutrient filters like protein, iron, or potassium.",
                 },
+                "source": {
+                    "type": "string",
+                    "enum": ["local", "api"],
+                    "default": "local",
+                    "description": "Use the local SQLite subset or the live USDA API.",
+                },
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional USDA API data type filters when source=api.",
+                },
             },
             "required": ["food_query"],
         },
     },
     {
         "name": "compare_foods",
-        "description": "Compare a nutrient value between two USDA foods.",
+        "description": "Compare a nutrient value between two USDA foods. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "food_a": {"type": "string"},
                 "food_b": {"type": "string"},
                 "nutrient": {"type": "string"},
+                "source": {
+                    "type": "string",
+                    "enum": ["local", "api"],
+                    "default": "local",
+                    "description": "Use the local SQLite subset or the live USDA API.",
+                },
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional USDA API data type filters when source=api.",
+                },
             },
             "required": ["food_a", "food_b", "nutrient"],
         },
     },
     {
         "name": "list_foods_by_nutrient",
-        "description": "Rank USDA foods by a given nutrient amount per 100g.",
+        "description": "Rank foods in the local Foundation subset by a given nutrient amount per 100g.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "nutrient": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                "source": {
+                    "type": "string",
+                    "enum": ["local", "api"],
+                    "default": "local",
+                    "description": "API mode is not supported for global ranking in this mini build.",
+                },
             },
             "required": ["nutrient"],
         },
     },
     {
         "name": "get_food_source_metadata",
-        "description": "Return source and citation metadata for a USDA Foundation food.",
+        "description": "Return source and citation metadata for a USDA food. Use source='api' for Branded, SR Legacy, or Survey/FNDDS data. If data_types is provided, the server will prefer the live USDA API.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "food_query": {"type": "string"},
+                "source": {
+                    "type": "string",
+                    "enum": ["local", "api"],
+                    "default": "local",
+                    "description": "Use the local SQLite subset or the live USDA API.",
+                },
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional USDA API data type filters when source=api.",
+                },
             },
             "required": ["food_query"],
         },
@@ -204,17 +255,54 @@ class MCPApplication:
         return error(request_id, -32601, f"Unknown method '{method}'."), session_id
 
     def _invoke_tool(self, repo: FoodRepository, name: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
+        source = self._pick_source(repo, arguments)
+        data_types = arguments.get("data_types")
         if name == "search_foods":
-            return repo.search_foods(arguments["query"], int(arguments.get("limit", 10)))
+            return repo.search_foods(
+                arguments["query"],
+                int(arguments.get("limit", 10)),
+                source=source,
+                data_types=data_types,
+            )
         if name == "get_food_nutrients":
-            return repo.get_food_nutrients(arguments["food_query"], arguments.get("nutrients"))
+            return repo.get_food_nutrients(
+                arguments["food_query"],
+                arguments.get("nutrients"),
+                source=source,
+                data_types=data_types,
+            )
         if name == "compare_foods":
-            return repo.compare_foods(arguments["food_a"], arguments["food_b"], arguments["nutrient"])
+            return repo.compare_foods(
+                arguments["food_a"],
+                arguments["food_b"],
+                arguments["nutrient"],
+                source=source,
+                data_types=data_types,
+            )
         if name == "list_foods_by_nutrient":
-            return repo.list_foods_by_nutrient(arguments["nutrient"], int(arguments.get("limit", 10)))
+            return repo.list_foods_by_nutrient(
+                arguments["nutrient"],
+                int(arguments.get("limit", 10)),
+                source=source,
+            )
         if name == "get_food_source_metadata":
-            return repo.get_food_source_metadata(arguments["food_query"])
+            return repo.get_food_source_metadata(
+                arguments["food_query"],
+                source=source,
+                data_types=data_types,
+            )
         raise ValueError(f"Unknown tool '{name}'.")
+
+    @staticmethod
+    def _pick_source(repo: FoodRepository, arguments: dict[str, Any]) -> str:
+        requested = arguments.get("source")
+        if requested in {"local", "api"}:
+            return requested
+        if arguments.get("data_types"):
+            return "api"
+        if not repo.db_path.exists() and os.environ.get("USDA_API_KEY"):
+            return "api"
+        return "local"
 
     def validate_session(self, session_id: str | None, method: str | None) -> tuple[bool, str | None]:
         if method == "initialize":
