@@ -452,8 +452,49 @@ def get_food_citation(fdc_id: int) -> dict:
 # FatSecret tools (2)
 # ===========================================================================
 
+def _parse_food_description(desc: str) -> dict:
+    """Parse FatSecret food_description string into a nutrient dict.
+
+    Format: "Per 1 serving - Calories: 220kcal | Fat: 10.00g | Carbs: 31.00g | Protein: 3.00g"
+    """
+    import re
+    nutrients: dict = {}
+    if not desc or " - " not in desc:
+        return nutrients
+    serving_part, nutrient_part = desc.split(" - ", 1)
+    nutrients["servingDescription"] = serving_part.strip()
+    for chunk in nutrient_part.split("|"):
+        chunk = chunk.strip()
+        if ":" not in chunk:
+            continue
+        label, value_str = chunk.split(":", 1)
+        label = label.strip().lower()
+        value_str = value_str.strip()
+        # strip unit suffix (kcal, g, mg, µg, iu)
+        num = re.sub(r"[a-zµ]+$", "", value_str, flags=re.IGNORECASE).strip()
+        try:
+            val = float(num)
+        except ValueError:
+            continue
+        key_map = {
+            "calories": "calories",
+            "fat": "fat",
+            "carbs": "carbohydrate",
+            "carbohydrates": "carbohydrate",
+            "protein": "protein",
+            "fiber": "fiber",
+            "sugar": "sugar",
+            "sodium": "sodium",
+            "cholesterol": "cholesterol",
+        }
+        mapped = key_map.get(label)
+        if mapped:
+            nutrients[mapped] = val
+    return nutrients
+
+
 def _parse_serving(serving: dict) -> dict:
-    """Normalise a FatSecret serving dict into a flat nutrient map."""
+    """Normalise a FatSecret serving dict (from food.get.v2) into a flat nutrient map."""
     fields = [
         "calories", "carbohydrate", "protein", "fat",
         "saturated_fat", "polyunsaturated_fat", "monounsaturated_fat",
@@ -474,7 +515,8 @@ def _parse_serving(serving: dict) -> dict:
         "servingDescription": serving.get("serving_description"),
         "metricServingAmount": serving.get("metric_serving_amount"),
         "metricServingUnit": serving.get("metric_serving_unit"),
-        "isDefault": serving.get("is_default") == "1",
+        "numberOfUnits": serving.get("number_of_units"),
+        "measurementDescription": serving.get("measurement_description"),
         "nutrients": nutrients,
     }
 
@@ -500,27 +542,26 @@ def search_fatsecret_foods(
     total = int(foods_wrap.get("total_results", 0))
     items = foods_wrap.get("food", [])
     if isinstance(items, dict):
+        # single result returned as dict, not list
         items = [items]
 
     results = []
     for f in items:
-        servings_raw = f.get("food_servings", {}) or {}
-        serving_list = servings_raw.get("serving", [])
-        if isinstance(serving_list, dict):
-            serving_list = [serving_list]
-        default_serving = next(
-            (s for s in serving_list if s.get("is_default") == "1"),
-            serving_list[0] if serving_list else {},
-        )
-        cal = default_serving.get("calories")
+        # v1 search returns food_description string, not structured food_servings
+        desc = f.get("food_description", "")
+        parsed = _parse_food_description(desc)
         results.append({
             "foodId": f.get("food_id"),
             "foodName": f.get("food_name"),
             "foodType": f.get("food_type"),
             "brandName": f.get("brand_name"),
             "foodUrl": f.get("food_url"),
-            "defaultServing": default_serving.get("serving_description"),
-            "calories": float(cal) if cal else None,
+            "foodDescription": desc,
+            "servingDescription": parsed.get("servingDescription"),
+            "calories": parsed.get("calories"),
+            "fat": parsed.get("fat"),
+            "carbohydrate": parsed.get("carbohydrate"),
+            "protein": parsed.get("protein"),
         })
 
     response = {
@@ -548,9 +589,13 @@ def get_fatsecret_food(food_id: str) -> dict:
     raw = _get_fs().get_food(food_id=str(food_id))
     food = raw.get("food", {})
 
+    if not food:
+        return {"source": "FatSecret", "error": "Food not found", "foodId": food_id}
+
     servings_raw = food.get("servings", {}) or {}
     serving_list = servings_raw.get("serving", [])
     if isinstance(serving_list, dict):
+        # single serving returned as dict, not list
         serving_list = [serving_list]
 
     parsed_servings = [_parse_serving(s) for s in serving_list]
@@ -568,11 +613,11 @@ def get_fatsecret_food(food_id: str) -> dict:
             "foodId": food.get("food_id"),
             "url": food.get("food_url"),
         },
+        # for food_index
+        "fdcId": f"fs:{food.get('food_id')}",
+        "description": food.get("food_name"),
+        "dataType": food.get("food_type", "Brand"),
     }
     if cache:
-        # index food_id under a synthetic fdcId-like key for list_cached_foods
-        response["fdcId"] = f"fs:{food.get('food_id')}"
-        response["description"] = food.get("food_name")
-        response["dataType"] = food.get("food_type", "Brand")
         cache.set("fatsecret", "get_fatsecret_food", key, response)
     return response

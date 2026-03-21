@@ -1,4 +1,4 @@
-"""Thin httpx wrapper around the FatSecret Platform REST API v4."""
+"""Thin httpx wrapper around the FatSecret Platform REST API."""
 
 from __future__ import annotations
 
@@ -66,7 +66,15 @@ class FatSecretClient:
         if response.status_code == 429:
             raise FatSecretError(429, "Rate limit exceeded (5 000 req/day)")
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        # FatSecret returns HTTP 200 even for API-level errors
+        if "error" in data:
+            err = data["error"]
+            raise FatSecretError(
+                err.get("code", 0),
+                err.get("message", "Unknown FatSecret API error"),
+            )
+        return data
 
     # ------------------------------------------------------------------
     # API methods
@@ -78,14 +86,17 @@ class FatSecretClient:
         page_number: int = 0,
         max_results: int = 20,
     ) -> dict:
-        """Search the FatSecret food database."""
+        """Search the FatSecret food database (v1 — free tier compatible).
+
+        Returns food_description string per item:
+        "Per 1 serving - Calories: 220kcal | Fat: 10.00g | Carbs: 31.00g | Protein: 3.00g"
+        """
         params = {
-            "method": "foods.search.v3",
+            "method": "foods.search",
             "search_expression": query,
             "page_number": page_number,
             "max_results": min(max(1, max_results), 50),
             "format": "json",
-            "flag_default_serving": "true",
         }
         with httpx.Client(timeout=30.0) as client:
             r = client.get(FS_BASE_URL + "/server.api", params=params,
@@ -93,12 +104,11 @@ class FatSecretClient:
             return self._handle_response(r)
 
     def get_food(self, food_id: str) -> dict:
-        """Get full nutrition details for a FatSecret food by ID."""
+        """Get full nutrition details for a FatSecret food by ID (v2 — free tier compatible)."""
         params = {
-            "method": "food.get.v4",
+            "method": "food.get.v2",
             "food_id": food_id,
             "format": "json",
-            "flag_default_serving": "true",
         }
         with httpx.Client(timeout=30.0) as client:
             r = client.get(FS_BASE_URL + "/server.api", params=params,
