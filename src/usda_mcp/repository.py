@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from usda_mcp.usda_api import USDAAPIClient
+from usda_mcp.usda_api import SUPPORTED_API_DATA_TYPES, USDAAPIClient, normalize_api_data_types
 
 
 DEFAULT_DB_PATH = Path("data/derived/usda_foundation_mini.sqlite")
@@ -79,7 +79,12 @@ class FoodRepository:
     ) -> dict[str, Any]:
         if source == "api":
             client = self._require_api_client()
-            return self._search_foods_api(client, query, limit=limit, data_types=data_types)
+            return self._search_foods_api(
+                client,
+                query,
+                limit=limit,
+                data_types=normalize_api_data_types(data_types),
+            )
 
         normalized = query.strip().lower()
         rows = self._connection().execute(
@@ -119,7 +124,7 @@ class FoodRepository:
                 client,
                 food_query,
                 nutrients=nutrients,
-                data_types=data_types,
+                data_types=normalize_api_data_types(data_types),
             )
 
         nutrient_names = [self._resolve_nutrient_name_local(item) for item in (nutrients or DEFAULT_NUTRIENTS)]
@@ -153,7 +158,13 @@ class FoodRepository:
     ) -> dict[str, Any]:
         if source == "api":
             client = self._require_api_client()
-            return self._compare_foods_api(client, food_a, food_b, nutrient, data_types=data_types)
+            return self._compare_foods_api(
+                client,
+                food_a,
+                food_b,
+                nutrient,
+                data_types=normalize_api_data_types(data_types),
+            )
 
         nutrient_name = self._resolve_nutrient_name_local(nutrient)
         left = self._resolve_food_local(food_a, nutrient_name)
@@ -224,7 +235,11 @@ class FoodRepository:
     ) -> dict[str, Any]:
         if source == "api":
             client = self._require_api_client()
-            food = self._resolve_food_api(client, food_query, data_types=data_types)
+            food = self._resolve_food_api(
+                client,
+                food_query,
+                data_types=normalize_api_data_types(data_types),
+            )
             return self._api_food_with_citation(food)
 
         food = self._resolve_food_local(food_query)
@@ -496,6 +511,10 @@ class FoodRepository:
             "source_dataset": ", ".join(data_types) if data_types else "All USDA API data types",
             "source_mode": "live_api",
         }
+
+    @staticmethod
+    def available_api_data_types() -> list[str]:
+        return list(SUPPORTED_API_DATA_TYPES)
 
     def _connection(self) -> sqlite3.Connection:
         if self.connection is None:

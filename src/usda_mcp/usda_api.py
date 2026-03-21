@@ -9,6 +9,21 @@ from urllib.request import Request, urlopen
 
 
 DEFAULT_BASE_URL = "https://api.nal.usda.gov/fdc/v1"
+API_DATA_TYPE_ALIASES = {
+    "foundation": "Foundation",
+    "foundation foods": "Foundation",
+    "branded": "Branded",
+    "branded foods": "Branded",
+    "sr legacy": "SR Legacy",
+    "standard reference": "SR Legacy",
+    "standard reference legacy": "SR Legacy",
+    "survey": "Survey",
+    "fndds": "Survey",
+    "food and nutrient database for dietary studies": "Survey",
+    "experimental": "Experimental",
+    "experimental foods": "Experimental",
+}
+SUPPORTED_API_DATA_TYPES = ["Foundation", "Branded", "SR Legacy", "Survey", "Experimental"]
 
 
 @dataclass
@@ -39,7 +54,7 @@ class USDAAPIClient:
             "pageNumber": page_number,
         }
         if data_types:
-            payload["dataType"] = data_types
+            payload["dataType"] = normalize_api_data_types(data_types)
         return self._request_json("POST", "/foods/search", payload=payload)
 
     def get_food_details(self, fdc_id: int) -> dict[str, Any]:
@@ -73,3 +88,20 @@ class USDAAPIClient:
         request = Request(url, data=body, headers=headers, method=method)
         with urlopen(request) as response:  # noqa: S310 - official USDA API endpoint
             return json.loads(response.read().decode("utf-8"))
+
+
+def normalize_api_data_types(data_types: list[str] | None) -> list[str] | None:
+    if not data_types:
+        return None
+    normalized = []
+    for item in data_types:
+        key = item.strip().lower()
+        value = API_DATA_TYPE_ALIASES.get(key)
+        if value is None:
+            allowed = ", ".join(SUPPORTED_API_DATA_TYPES)
+            raise ValueError(
+                f"Unsupported USDA API data type '{item}'. Supported values: {allowed}."
+            )
+        if value not in normalized:
+            normalized.append(value)
+    return normalized

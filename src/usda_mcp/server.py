@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from usda_mcp.repository import FoodRepository
+from usda_mcp.usda_api import SUPPORTED_API_DATA_TYPES
 
 
 SUPPORTED_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-11-25"}
@@ -43,7 +44,7 @@ TOOLS = [
                 },
                 "data_types": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
                     "description": "Optional USDA API data types like Branded, Foundation, SR Legacy, or Survey (FNDDS).",
                 },
             },
@@ -70,7 +71,7 @@ TOOLS = [
                 },
                 "data_types": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
                     "description": "Optional USDA API data type filters when source=api.",
                 },
             },
@@ -94,7 +95,7 @@ TOOLS = [
                 },
                 "data_types": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
                     "description": "Optional USDA API data type filters when source=api.",
                 },
             },
@@ -134,11 +135,83 @@ TOOLS = [
                 },
                 "data_types": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
                     "description": "Optional USDA API data type filters when source=api.",
                 },
             },
             "required": ["food_query"],
+        },
+    },
+    {
+        "name": "search_foods_api",
+        "description": "Search USDA foods using the live USDA API only. Supports Foundation, Branded, SR Legacy, Survey/FNDDS, and Experimental.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10},
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_food_nutrients_api",
+        "description": "Get nutrient details using the live USDA API only. Supports Foundation, Branded, SR Legacy, Survey/FNDDS, and Experimental.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "food_query": {"type": "string"},
+                "nutrients": {"type": "array", "items": {"type": "string"}},
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
+                },
+            },
+            "required": ["food_query"],
+        },
+    },
+    {
+        "name": "compare_foods_api",
+        "description": "Compare two foods using the live USDA API only. Supports Foundation, Branded, SR Legacy, Survey/FNDDS, and Experimental.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "food_a": {"type": "string"},
+                "food_b": {"type": "string"},
+                "nutrient": {"type": "string"},
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
+                },
+            },
+            "required": ["food_a", "food_b", "nutrient"],
+        },
+    },
+    {
+        "name": "get_food_source_metadata_api",
+        "description": "Get citation/source metadata using the live USDA API only. Supports Foundation, Branded, SR Legacy, Survey/FNDDS, and Experimental.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "food_query": {"type": "string"},
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": SUPPORTED_API_DATA_TYPES},
+                },
+            },
+            "required": ["food_query"],
+        },
+    },
+    {
+        "name": "list_available_data_types",
+        "description": "List the USDA FoodData Central data types supported by the live API path in this server.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
         },
     },
 ]
@@ -264,11 +337,25 @@ class MCPApplication:
                 source=source,
                 data_types=data_types,
             )
+        if name == "search_foods_api":
+            return repo.search_foods(
+                arguments["query"],
+                int(arguments.get("limit", 10)),
+                source="api",
+                data_types=data_types,
+            )
         if name == "get_food_nutrients":
             return repo.get_food_nutrients(
                 arguments["food_query"],
                 arguments.get("nutrients"),
                 source=source,
+                data_types=data_types,
+            )
+        if name == "get_food_nutrients_api":
+            return repo.get_food_nutrients(
+                arguments["food_query"],
+                arguments.get("nutrients"),
+                source="api",
                 data_types=data_types,
             )
         if name == "compare_foods":
@@ -277,6 +364,14 @@ class MCPApplication:
                 arguments["food_b"],
                 arguments["nutrient"],
                 source=source,
+                data_types=data_types,
+            )
+        if name == "compare_foods_api":
+            return repo.compare_foods(
+                arguments["food_a"],
+                arguments["food_b"],
+                arguments["nutrient"],
+                source="api",
                 data_types=data_types,
             )
         if name == "list_foods_by_nutrient":
@@ -291,6 +386,21 @@ class MCPApplication:
                 source=source,
                 data_types=data_types,
             )
+        if name == "get_food_source_metadata_api":
+            return repo.get_food_source_metadata(
+                arguments["food_query"],
+                source="api",
+                data_types=data_types,
+            )
+        if name == "list_available_data_types":
+            return {
+                "api_supported_data_types": repo.available_api_data_types(),
+                "notes": [
+                    "Survey is the USDA API data type corresponding to FNDDS.",
+                    "Experimental is exposed as a supported API option in this server.",
+                    "Foundation is also available locally in the SQLite subset.",
+                ],
+            }
         raise ValueError(f"Unknown tool '{name}'.")
 
     @staticmethod

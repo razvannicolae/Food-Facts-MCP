@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from usda_mcp.repository import FoodRepository
+from usda_mcp.usda_api import normalize_api_data_types
 
 
 class FakeUSDAAPIClient:
@@ -77,6 +78,13 @@ class APIRepositoryTests(unittest.TestCase):
         repo = FoodRepository(api_client=FakeUSDAAPIClient())
         result = repo.compare_foods("banana", "avocado", "potassium", source="api")
         self.assertEqual(result["winner"], "Avocado, Hass, raw")
+
+    def test_normalize_api_data_types_supports_fndds_alias(self) -> None:
+        self.assertEqual(normalize_api_data_types(["FNDDS", "Branded"]), ["Survey", "Branded"])
+
+    def test_available_api_data_types_includes_experimental(self) -> None:
+        repo = FoodRepository(api_client=FakeUSDAAPIClient())
+        self.assertIn("Experimental", repo.available_api_data_types())
 
 
 if __name__ == "__main__":

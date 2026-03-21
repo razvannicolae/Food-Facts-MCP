@@ -116,6 +116,14 @@ In MCP calls, you can pass:
 - `source: "api"`
 - `data_types: ["Branded"]` or `["Foundation", "SR Legacy"]`
 
+The API-facing data types supported by this server are:
+
+- `Foundation`
+- `Branded`
+- `SR Legacy`
+- `Survey` (this is the USDA API name for `FNDDS`)
+- `Experimental`
+
 Example tool arguments for `search_foods`:
 
 ```json
@@ -126,6 +134,14 @@ Example tool arguments for `search_foods`:
   "limit": 5
 }
 ```
+
+To make ChatGPT prefer the live API path, you can also use the explicit API-only tools:
+
+- `search_foods_api`
+- `get_food_nutrients_api`
+- `compare_foods_api`
+- `get_food_source_metadata_api`
+- `list_available_data_types`
 
 ### Current API-backed scope
 
