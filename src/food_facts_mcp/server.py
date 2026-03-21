@@ -1,6 +1,7 @@
 """Food Facts MCP Server.
 
 USDA FoodData Central — 8 tools, 4 resources, 4 prompts.
+FatSecret — 2 tools (search_fatsecret_foods, get_fatsecret_food).
 Cache management — 3 tools (get_cache_stats, list_cached_foods, clear_cache).
 
 Transport options (--transport flag):
@@ -37,7 +38,11 @@ mcp = FastMCP(
         "NUTRIENT RANKING (list_foods_by_nutrient): always set prefer_whole_foods=True "
         "unless the user specifically wants processed/fortified products. This prevents "
         "fortified cereals and supplements from flooding the results.\n\n"
-        "All tool responses include a 'citation' block with source, fdcId, dataset, and URL."
+        "All tool responses include a 'citation' block with source, fdcId, dataset, and URL.\n\n"
+        "FATSECRET (restaurant & branded foods):\n"
+        "- Use search_fatsecret_foods to find fast food items (McDonald's, Chick-fil-A, etc.)\n"
+        "- Then get_fatsecret_food with the returned food_id for full nutrition breakdown\n"
+        "- food_type='Brand' = branded/restaurant, food_type='Generic' = generic"
     ),
 )
 
@@ -195,6 +200,46 @@ def get_food_citation(fdc_id: int) -> dict:
         fdc_id: USDA FoodData Central ID
     """
     return _tools.get_food_citation(fdc_id=fdc_id)
+
+
+# ===========================================================================
+# FatSecret tools
+# ===========================================================================
+
+
+@mcp.tool()
+def search_fatsecret_foods(
+    query: str,
+    max_results: int = 20,
+    page_number: int = 0,
+) -> dict:
+    """Search the FatSecret food database — strong coverage of branded and restaurant foods.
+
+    Good for fast food chains (McDonald's, Chick-fil-A, etc.) and packaged products.
+    Returns food IDs you can pass to get_fatsecret_food for full nutrition.
+
+    Args:
+        query: Food name or restaurant item (e.g. "McChicken", "Chick-fil-A sandwich")
+        max_results: Number of results, 1–50 (default 20)
+        page_number: Zero-based page offset (default 0)
+    """
+    return _tools.search_fatsecret_foods(
+        query=query, max_results=max_results, page_number=page_number,
+    )
+
+
+@mcp.tool()
+def get_fatsecret_food(food_id: str) -> dict:
+    """Get full nutrition details for a FatSecret food by its food ID.
+
+    Returns all available servings with a complete nutrient breakdown:
+    calories, protein, fat, carbs, fiber, sugar, sodium, cholesterol,
+    vitamins A/C/D, calcium, iron, and more.
+
+    Args:
+        food_id: FatSecret food ID from search_fatsecret_foods results
+    """
+    return _tools.get_fatsecret_food(food_id=food_id)
 
 
 # ===========================================================================

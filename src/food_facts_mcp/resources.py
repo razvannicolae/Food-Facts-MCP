@@ -80,6 +80,14 @@ SOURCES_INFO: dict[str, dict] = {
         "api_key_required": True,
         "url": "https://fdc.nal.usda.gov",
     },
+    "FatSecret": {
+        "api": "FatSecret Platform API",
+        "description": "Large commercial food database with 2.3M+ foods including restaurant chains and branded products.",
+        "coverage": "Restaurant/fast food chains, branded packaged foods, generic foods",
+        "best_for": "Fast food nutrition (McDonald's, Chick-fil-A, etc.) and branded products",
+        "api_key_required": True,
+        "url": "https://platform.fatsecret.com",
+    },
 }
 
 
@@ -109,7 +117,7 @@ def get_server_metadata() -> dict:
                 "apiKeyStatus": "configured" if configured else "using DEMO_KEY (limited)",
             },
         },
-        "tools": 11,
+        "tools": 13,
         "resources": 4,
         "prompts": 4,
     }

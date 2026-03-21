@@ -1,4 +1,4 @@
-"""All tool implementations — USDA FoodData Central (8 tools)."""
+"""All tool implementations — USDA FoodData Central (8 tools) + FatSecret (2 tools)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ from .citations import (
     format_mla_citation,
 )
 from .fdc_client import FDCClient
+from .fatsecret_client import FatSecretClient
 
 _fdc: Optional[FDCClient] = None
+_fs: Optional[FatSecretClient] = None
 
 
 def _get_fdc() -> FDCClient:
@@ -20,6 +22,13 @@ def _get_fdc() -> FDCClient:
     if _fdc is None:
         _fdc = FDCClient()
     return _fdc
+
+
+def _get_fs() -> FatSecretClient:
+    global _fs
+    if _fs is None:
+        _fs = FatSecretClient()
+    return _fs
 
 
 # ===========================================================================
@@ -436,4 +445,134 @@ def get_food_citation(fdc_id: int) -> dict:
     }
     if cache:
         cache.set("usda_fdc", "get_food_citation", key, response)
+    return response
+
+
+# ===========================================================================
+# FatSecret tools (2)
+# ===========================================================================
+
+def _parse_serving(serving: dict) -> dict:
+    """Normalise a FatSecret serving dict into a flat nutrient map."""
+    fields = [
+        "calories", "carbohydrate", "protein", "fat",
+        "saturated_fat", "polyunsaturated_fat", "monounsaturated_fat",
+        "trans_fat", "cholesterol", "sodium", "potassium",
+        "fiber", "sugar", "added_sugars",
+        "vitamin_a", "vitamin_c", "vitamin_d", "calcium", "iron",
+    ]
+    nutrients = {}
+    for f in fields:
+        val = serving.get(f)
+        if val is not None:
+            try:
+                nutrients[f] = float(val)
+            except (TypeError, ValueError):
+                pass
+    return {
+        "servingId": serving.get("serving_id"),
+        "servingDescription": serving.get("serving_description"),
+        "metricServingAmount": serving.get("metric_serving_amount"),
+        "metricServingUnit": serving.get("metric_serving_unit"),
+        "isDefault": serving.get("is_default") == "1",
+        "nutrients": nutrients,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 9 — search_fatsecret_foods
+# ---------------------------------------------------------------------------
+
+def search_fatsecret_foods(
+    query: str,
+    max_results: int = 20,
+    page_number: int = 0,
+) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("search_fatsecret_foods", query=query,
+                             max_results=max_results, page_number=page_number)
+    if cache and (hit := cache.get("fatsecret", key)):
+        return hit
+
+    raw = _get_fs().search_foods(query=query, page_number=page_number,
+                                 max_results=max_results)
+    foods_wrap = raw.get("foods", {})
+    total = int(foods_wrap.get("total_results", 0))
+    items = foods_wrap.get("food", [])
+    if isinstance(items, dict):
+        items = [items]
+
+    results = []
+    for f in items:
+        servings_raw = f.get("food_servings", {}) or {}
+        serving_list = servings_raw.get("serving", [])
+        if isinstance(serving_list, dict):
+            serving_list = [serving_list]
+        default_serving = next(
+            (s for s in serving_list if s.get("is_default") == "1"),
+            serving_list[0] if serving_list else {},
+        )
+        cal = default_serving.get("calories")
+        results.append({
+            "foodId": f.get("food_id"),
+            "foodName": f.get("food_name"),
+            "foodType": f.get("food_type"),
+            "brandName": f.get("brand_name"),
+            "foodUrl": f.get("food_url"),
+            "defaultServing": default_serving.get("serving_description"),
+            "calories": float(cal) if cal else None,
+        })
+
+    response = {
+        "source": "FatSecret",
+        "query": query,
+        "totalResults": total,
+        "pageNumber": page_number,
+        "foods": results,
+    }
+    if cache:
+        cache.set("fatsecret", "search_fatsecret_foods", key, response)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Tool 10 — get_fatsecret_food
+# ---------------------------------------------------------------------------
+
+def get_fatsecret_food(food_id: str) -> dict:
+    cache = get_cache()
+    key = FoodCache.make_key("get_fatsecret_food", food_id=str(food_id))
+    if cache and (hit := cache.get("fatsecret", key)):
+        return hit
+
+    raw = _get_fs().get_food(food_id=str(food_id))
+    food = raw.get("food", {})
+
+    servings_raw = food.get("servings", {}) or {}
+    serving_list = servings_raw.get("serving", [])
+    if isinstance(serving_list, dict):
+        serving_list = [serving_list]
+
+    parsed_servings = [_parse_serving(s) for s in serving_list]
+
+    response = {
+        "source": "FatSecret",
+        "foodId": food.get("food_id"),
+        "foodName": food.get("food_name"),
+        "foodType": food.get("food_type"),
+        "brandName": food.get("brand_name"),
+        "foodUrl": food.get("food_url"),
+        "servings": parsed_servings,
+        "citation": {
+            "source": "FatSecret Platform API",
+            "foodId": food.get("food_id"),
+            "url": food.get("food_url"),
+        },
+    }
+    if cache:
+        # index food_id under a synthetic fdcId-like key for list_cached_foods
+        response["fdcId"] = f"fs:{food.get('food_id')}"
+        response["description"] = food.get("food_name")
+        response["dataType"] = food.get("food_type", "Brand")
+        cache.set("fatsecret", "get_fatsecret_food", key, response)
     return response
