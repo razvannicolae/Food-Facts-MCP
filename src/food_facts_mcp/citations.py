@@ -1,4 +1,4 @@
-"""Shared citation-formatting utilities for all USDA FDC tools."""
+"""Shared citation-formatting utilities for USDA FoodData Central."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import date
 from typing import Optional
 
 
-def build_citation(
+def build_fdc_citation(
     fdc_id: int,
     description: str,
     data_type: str,
@@ -14,7 +14,6 @@ def build_citation(
     brand_owner: Optional[str] = None,
     ndb_number: Optional[str | int] = None,
 ) -> dict:
-    """Return the standard citation block included in every tool response."""
     return {
         "source": "USDA FoodData Central",
         "dataset": data_type,
@@ -29,8 +28,7 @@ def build_citation(
 
 
 def citation_from_food(food: dict) -> dict:
-    """Build a citation dict from a raw FDC food object."""
-    return build_citation(
+    return build_fdc_citation(
         fdc_id=food.get("fdcId"),
         description=food.get("description", ""),
         data_type=food.get("dataType", ""),
@@ -41,13 +39,11 @@ def citation_from_food(food: dict) -> dict:
 
 
 def format_apa_citation(food: dict) -> str:
-    """Return an APA-style citation string for a FDC food record."""
     fdc_id = food.get("fdcId")
     description = food.get("description", "Unknown food")
     data_type = food.get("dataType", "")
     pub_date = food.get("publicationDate") or food.get("modifiedDate") or "n.d."
     url = f"https://fdc.nal.usda.gov/food-details/{fdc_id}/nutrients"
-
     return (
         f"U.S. Department of Agriculture, Agricultural Research Service. "
         f"({pub_date}). {description} [FDC ID: {fdc_id}]. "
@@ -56,13 +52,11 @@ def format_apa_citation(food: dict) -> str:
 
 
 def format_mla_citation(food: dict) -> str:
-    """Return an MLA-style citation string for a FDC food record."""
     fdc_id = food.get("fdcId")
     description = food.get("description", "Unknown food")
     data_type = food.get("dataType", "")
     pub_date = food.get("publicationDate") or food.get("modifiedDate") or "n.d."
     url = f"https://fdc.nal.usda.gov/food-details/{fdc_id}/nutrients"
-
     return (
         f'United States Department of Agriculture, Agricultural Research Service. '
         f'"{description}." FoodData Central, {data_type} dataset, {pub_date}. '

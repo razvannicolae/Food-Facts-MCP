@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "usda-mcp"
-version = "0.1.0"
-description = "USDA FoodData Central MCP Server — live API backed"
+name = "food-facts-mcp"
+version = "0.2.0"
+description = "Food Facts MCP — USDA FoodData Central + Open Food Facts"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,10 +15,10 @@ dependencies = [
 ]
 
 [project.scripts]
-usda-mcp-server = "usda_mcp.server:main"
+food-facts-server = "food_facts_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/usda_mcp"]
+packages = ["src/food_facts_mcp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
