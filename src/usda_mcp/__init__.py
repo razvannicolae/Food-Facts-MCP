@@ -1,3 +1,3 @@
-"""Mini USDA FoodData Central MCP server."""
+"""USDA FoodData Central MCP Server."""
 
-__all__ = ["builder", "repository", "server"]
+__version__ = "0.1.0"
