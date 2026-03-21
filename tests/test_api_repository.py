@@ -91,7 +91,12 @@ class FakeUSDAAPIClient:
                         "foodCategory": item["foodCategory"],
                         "publicationDate": item["publicationDate"],
                         "foodNutrients": [
-                            {"nutrientName": nutrient["nutrient"]["name"]}
+                            {
+                                "nutrientName": nutrient["nutrient"]["name"],
+                                "value": nutrient["amount"],
+                                "unitName": nutrient["nutrient"]["unitName"],
+                                "nutrientNumber": nutrient["nutrient"]["number"],
+                            }
                             for nutrient in item["foodNutrients"]
                         ],
                     }
@@ -103,6 +108,13 @@ class FakeUSDAAPIClient:
 
     def search_nutrient_names(self, query: str):
         return ["Potassium, K", "Protein"]
+
+
+class FlakyDetailUSDAAPIClient(FakeUSDAAPIClient):
+    def get_food_details(self, fdc_id: int):
+        if fdc_id in {100, 250}:
+            raise ValueError(f"USDA API request failed with HTTP 404: mock missing detail for {fdc_id}")
+        return super().get_food_details(fdc_id)
 
 
 class APIRepositoryTests(unittest.TestCase):
@@ -125,6 +137,18 @@ class APIRepositoryTests(unittest.TestCase):
 
     def test_compare_foods_api_prefers_fruit_over_pepper_matches(self) -> None:
         repo = FoodRepository(api_client=FakeUSDAAPIClient())
+        result = repo.compare_foods(
+            "banana",
+            "orange",
+            "potassium",
+            source="api",
+            data_types=["Foundation"],
+        )
+        self.assertEqual(result["food_a"]["description"], "Banana, raw")
+        self.assertEqual(result["food_b"]["description"], "Oranges, raw, navels")
+
+    def test_compare_foods_api_falls_back_to_search_row_when_best_detail_fails(self) -> None:
+        repo = FoodRepository(api_client=FlakyDetailUSDAAPIClient())
         result = repo.compare_foods(
             "banana",
             "orange",

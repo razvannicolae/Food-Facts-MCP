@@ -439,7 +439,7 @@ class FoodRepository:
             if nutrient_name is None or self._api_food_has_nutrient(food, nutrient_name):
                 return food
 
-        response = client.search_foods(query, page_size=10, data_types=data_types)
+        response = client.search_foods(query, page_size=25, data_types=data_types)
         foods = sorted(
             response.get("foods", []),
             key=lambda item: _food_match_sort_key(query, item.get("description", "")),
@@ -452,10 +452,14 @@ class FoodRepository:
 
         detail_errors = []
         for item in foods:
+            if not self._api_food_mentions_nutrient(item, nutrient_name):
+                continue
             try:
                 detail = client.get_food_details(item["fdcId"])
             except ValueError as exc:
                 detail_errors.append(str(exc))
+                if self._api_food_has_nutrient(item, nutrient_name):
+                    return item
                 continue
             if self._api_food_has_nutrient(detail, nutrient_name):
                 return detail
@@ -479,7 +483,7 @@ class FoodRepository:
                 return client.get_food_details(item["fdcId"])
             except ValueError as exc:
                 detail_errors.append(str(exc))
-                continue
+                return item
         if detail_errors:
             raise ValueError(
                 f"USDA API search found matches for '{query}', but all detail lookups failed. "
@@ -566,6 +570,15 @@ class FoodRepository:
 
     def _api_food_has_nutrient(self, food: dict[str, Any], nutrient_name: str) -> bool:
         return any(nutrient["name"] == nutrient_name for nutrient in self._extract_api_nutrients(food))
+
+    @staticmethod
+    def _api_food_mentions_nutrient(food: dict[str, Any], nutrient_name: str) -> bool:
+        for item in food.get("foodNutrients", []):
+            nutrient = item.get("nutrient") or {}
+            name = nutrient.get("name") or item.get("nutrientName") or item.get("name")
+            if name == nutrient_name:
+                return True
+        return False
 
     def _food_with_citation(self, row: sqlite3.Row) -> dict[str, Any]:
         serialized = self._serialize_food_row(row)
