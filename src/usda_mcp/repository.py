@@ -48,6 +48,38 @@ def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+def _query_variants(query: str) -> list[str]:
+    normalized = _normalize(query)
+    variants = {normalized}
+    if normalized.endswith("es"):
+        variants.add(normalized[:-2])
+    elif normalized.endswith("s"):
+        variants.add(normalized[:-1])
+    else:
+        variants.add(f"{normalized}s")
+        variants.add(f"{normalized}es")
+    return [item for item in variants if item]
+
+
+def _food_match_sort_key(query: str, description: str) -> tuple[int, int, str]:
+    normalized_query = _normalize(query)
+    normalized_description = _normalize(description)
+    variants = _query_variants(query)
+    description_words = normalized_description.split()
+
+    if normalized_description in variants:
+        return (0, len(normalized_description), normalized_description)
+    if any(normalized_description.startswith(variant + " ") for variant in variants):
+        return (1, len(normalized_description), normalized_description)
+    if description_words and description_words[0] in variants:
+        return (2, len(normalized_description), normalized_description)
+    if any(f" {variant} " in f" {normalized_description} " for variant in variants):
+        return (3, len(normalized_description), normalized_description)
+    if normalized_query in normalized_description:
+        return (4, len(normalized_description), normalized_description)
+    return (5, len(normalized_description), normalized_description)
+
+
 @dataclass
 class FoodRepository:
     db_path: Path = DEFAULT_DB_PATH
@@ -383,7 +415,10 @@ class FoodRepository:
                 return food
 
         response = client.search_foods(query, page_size=10, data_types=data_types)
-        foods = response.get("foods", [])
+        foods = sorted(
+            response.get("foods", []),
+            key=lambda item: _food_match_sort_key(query, item.get("description", "")),
+        )
         if not foods:
             raise ValueError(f"No USDA API food matched '{query}'.")
 

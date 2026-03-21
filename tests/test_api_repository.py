@@ -21,6 +21,17 @@ class FakeUSDAAPIClient:
                 ],
                 "foodPortions": [],
             },
+            150: {
+                "fdcId": 150,
+                "description": "Peppers, banana or Hungarian wax, seeded, raw",
+                "dataType": "Foundation",
+                "foodCategory": "Vegetables and Vegetable Products",
+                "publicationDate": "2025-12-18",
+                "foodNutrients": [
+                    {"nutrient": {"id": 1092, "number": "306", "name": "Potassium, K", "unitName": "mg"}, "amount": 177.4},
+                ],
+                "foodPortions": [],
+            },
             200: {
                 "fdcId": 200,
                 "description": "Avocado, Hass, raw",
@@ -30,6 +41,28 @@ class FakeUSDAAPIClient:
                 "foodNutrients": [
                     {"nutrient": {"id": 1092, "number": "306", "name": "Potassium, K", "unitName": "mg"}, "amount": 485},
                     {"nutrient": {"id": 1003, "number": "203", "name": "Protein", "unitName": "g"}, "amount": 2.0},
+                ],
+                "foodPortions": [],
+            },
+            250: {
+                "fdcId": 250,
+                "description": "Oranges, raw, navels",
+                "dataType": "Foundation",
+                "foodCategory": "Fruits and Fruit Juices",
+                "publicationDate": "2025-04-24",
+                "foodNutrients": [
+                    {"nutrient": {"id": 1092, "number": "306", "name": "Potassium, K", "unitName": "mg"}, "amount": 181.0},
+                ],
+                "foodPortions": [],
+            },
+            260: {
+                "fdcId": 260,
+                "description": "Peppers, bell, orange, raw",
+                "dataType": "Foundation",
+                "foodCategory": "Vegetables and Vegetable Products",
+                "publicationDate": "2022-04-28",
+                "foodNutrients": [
+                    {"nutrient": {"id": 1092, "number": "306", "name": "Potassium, K", "unitName": "mg"}, "amount": 200.8},
                 ],
                 "foodPortions": [],
             },
@@ -78,6 +111,18 @@ class APIRepositoryTests(unittest.TestCase):
         repo = FoodRepository(api_client=FakeUSDAAPIClient())
         result = repo.compare_foods("banana", "avocado", "potassium", source="api")
         self.assertEqual(result["winner"], "Avocado, Hass, raw")
+
+    def test_compare_foods_api_prefers_fruit_over_pepper_matches(self) -> None:
+        repo = FoodRepository(api_client=FakeUSDAAPIClient())
+        result = repo.compare_foods(
+            "banana",
+            "orange",
+            "potassium",
+            source="api",
+            data_types=["Foundation"],
+        )
+        self.assertEqual(result["food_a"]["description"], "Banana, raw")
+        self.assertEqual(result["food_b"]["description"], "Oranges, raw, navels")
 
     def test_normalize_api_data_types_supports_fndds_alias(self) -> None:
         self.assertEqual(normalize_api_data_types(["FNDDS", "Branded"]), ["Survey", "Branded"])
