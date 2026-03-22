@@ -420,7 +420,7 @@ def _build_http_app(extra_origins: list[str]):
                 headers = MutableHeaders(scope=scope)
                 origin = headers.get("origin")
                 if origin and origin in trusted_origin_set:
-                    headers["origin"] = "http://127.0.0.1"
+                    headers["origin"] = "http://localhost"
             await self.app(scope, receive, send)
 
     class HealthCheck(BaseHTTPMiddleware):
