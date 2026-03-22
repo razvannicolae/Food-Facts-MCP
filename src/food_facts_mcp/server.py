@@ -395,11 +395,33 @@ _DEFAULT_ORIGINS = [
 def _build_http_app(extra_origins: list[str]):
     """Wrap FastMCP's ASGI app with CORS middleware and a health check."""
     import uvicorn  # noqa: F401 — ensure importable before we start
+    from starlette.datastructures import MutableHeaders
     from starlette.middleware.cors import CORSMiddleware
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
 
     origins = list(dict.fromkeys(_DEFAULT_ORIGINS + extra_origins))
+    trusted_origin_set = set(origins)
+
+    class OriginRewriteMiddleware:
+        """Rewrite explicitly trusted browser origins before FastMCP validates them.
+
+        FastMCP performs its own origin checks internally. For a reverse-proxied
+        public deployment, we still want outer CORS to see the real browser
+        origin, but we need the inner MCP app to treat trusted frontend origins
+        like localhost to avoid false rejections.
+        """
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                headers = MutableHeaders(scope=scope)
+                origin = headers.get("origin")
+                if origin and origin in trusted_origin_set:
+                    headers["origin"] = "http://127.0.0.1"
+            await self.app(scope, receive, send)
 
     class HealthCheck(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
@@ -412,10 +434,11 @@ def _build_http_app(extra_origins: list[str]):
                 })
             return await call_next(request)
 
-    app = mcp.streamable_http_app()
-    app = HealthCheck(app)
+    inner_app = mcp.streamable_http_app()
+    inner_app = OriginRewriteMiddleware(inner_app)
+    inner_app = HealthCheck(inner_app)
     app = CORSMiddleware(
-        app,
+        inner_app,
         allow_origins=origins,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -28,13 +28,13 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _start_server(port: int) -> threading.Event:
+def _start_server(port: int, extra_origins: list[str] | None = None) -> threading.Event:
     """Start the HTTP app in a daemon thread. Returns a ready Event."""
     import uvicorn
     from food_facts_mcp.server import _build_http_app
 
     ready = threading.Event()
-    app = _build_http_app([])
+    app = _build_http_app(extra_origins or [])
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     server = uvicorn.Server(config)
@@ -131,6 +131,24 @@ def test_cors_header_on_post(server_url):
     )
     acao = headers.get("access-control-allow-origin") or headers.get("Access-Control-Allow-Origin")
     assert acao is not None, f"Missing CORS header. Response status={status}, headers={headers}"
+
+
+def test_custom_origin_allowed_on_post():
+    port = _find_free_port()
+    ready = _start_server(port, ["https://hoohacks26ui.vercel.app"])
+    assert ready.wait(timeout=10), "HTTP server did not start in time"
+
+    status, headers, _ = _post(
+        f"http://127.0.0.1:{port}/mcp",
+        body={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05",
+                         "capabilities": {},
+                         "clientInfo": {"name": "test", "version": "0"}}},
+        headers={"Origin": "https://hoohacks26ui.vercel.app"},
+    )
+    acao = headers.get("access-control-allow-origin") or headers.get("Access-Control-Allow-Origin")
+    assert status == 200, f"Expected successful initialize for trusted origin, got {status}"
+    assert acao == "https://hoohacks26ui.vercel.app"
 
 
 def test_mcp_initialize(server_url):
