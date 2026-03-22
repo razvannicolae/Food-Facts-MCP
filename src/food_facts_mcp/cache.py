@@ -1,4 +1,4 @@
-git p"""SQLite-backed response cache for Food Facts MCP tools."""
+ """SQLite-backed response cache for Food Facts MCP tools."""
 
 from __future__ import annotations
 
