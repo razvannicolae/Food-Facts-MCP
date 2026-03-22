@@ -1,49 +1,92 @@
-# USDA FoodData Central MCP Server
+# Food Facts MCP Server
 
-An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that gives AI agents real-time access to the [USDA FoodData Central](https://fdc.nal.usda.gov) database. Search any food, retrieve full nutrient tables, compare foods side-by-side, and get properly formatted citations — all backed by the live FDC REST API.
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that gives AI assistants real-time access to nutrition data from two sources: **USDA FoodData Central** (whole foods, branded products, restaurant items) and **FatSecret** (extensive branded and fast-food coverage). Built for HooHacks 2026.
 
-## Features
+---
 
-**8 Tools**
-| Tool | What it does |
+## The problem
+
+AI assistants like Claude know a lot about nutrition in general, but they cannot reliably answer specific nutrition questions without this server. Three concrete failure modes:
+
+**1. Hallucinated numbers.** Ask Claude "how much protein is in a Chick-fil-A Deluxe Sandwich?" without live data access and it will produce a plausible-sounding number from training data — which may be wrong, outdated, or for a different serving size. There is no way for the model to know it's wrong.
+
+**2. No citations.** Any nutrition claim an AI makes from memory is uncitable. For dietary tracking, research, or anything that matters, you need a traceable source. Without this server, Claude cannot point you to a specific USDA FDC record or FatSecret entry — it can only say "according to general knowledge."
+
+**3. Stale data.** Restaurant menus and product formulations change. An AI's training data has a cutoff; it has no way to reflect a menu item that was reformulated last quarter. This server fetches live data every time (and caches it), so the numbers are current.
+
+This MCP server solves all three by connecting the AI directly to authoritative, live databases — USDA FoodData Central (the US government's official nutrition database) and FatSecret (2.3M+ branded and restaurant foods) — and attaching a citation to every response.
+
+---
+
+## What it does
+
+Ask Claude (or any MCP-compatible AI) questions like:
+
+- *"What are the nutrition facts for a Chick-fil-A chicken sandwich?"*
+- *"Compare broccoli and spinach for iron content."*
+- *"What are the top 10 foods highest in vitamin C?"*
+- *"Give me an APA citation for USDA data on raw almonds."*
+
+The server fetches live data, caches results locally in SQLite, and returns structured responses with citations.
+
+---
+
+## Tools (13 total)
+
+### USDA FoodData Central (8 tools)
+
+| Tool | Description |
 |------|-------------|
-| `search_foods` | Keyword search with optional data type / brand filter |
+| `search_foods` | Keyword search with dataset and brand filters |
 | `get_food` | Full food details by FDC ID |
 | `get_multiple_foods` | Batch lookup — up to 20 IDs at once |
-| `get_food_nutrients` | Human-readable nutrient table with citation |
+| `get_food_nutrients` | Human-readable nutrient table sorted by nutrient number |
 | `compare_foods` | Side-by-side nutrient comparison of two foods |
 | `list_foods` | Browse all foods with pagination |
 | `list_foods_by_nutrient` | Top N foods ranked by a given nutrient |
-| `get_food_citation` | Citation-ready metadata (APA + MLA) |
+| `get_food_citation` | Citation-ready metadata (APA + MLA formats) |
 
-Every tool response includes a `citation` block:
-```json
-{
-  "source": "USDA FoodData Central",
-  "dataset": "Foundation",
-  "fdcId": 747448,
-  "url": "https://fdc.nal.usda.gov/food-details/747448/nutrients",
-  "publicationDate": "2019-04-01"
-}
-```
+### FatSecret (2 tools)
 
-**4 Resources** (URI-addressed read-only data)
-- `usda://food/{fdcId}` — live food item JSON
-- `usda://nutrients/reference` — all standard USDA nutrient numbers, names, and units
-- `usda://datasets/info` — descriptions of Foundation, SR Legacy, Branded, Survey datasets
-- `usda://server/metadata` — version, rate limits, API key status
+| Tool | Description |
+|------|-------------|
+| `search_fatsecret_foods` | Search branded and restaurant foods (McDonald's, Chick-fil-A, Subway, etc.) |
+| `get_fatsecret_food` | Full nutrition breakdown by FatSecret food ID — all serving sizes |
 
-**4 Prompt Templates**
-- `analyze_food_nutrition` — structured nutrition analysis with citations
-- `compare_foods_for_goal` — goal-oriented food comparison
-- `dietary_advice` — evidence-based dietary advice anchored to FDC data
-- `meal_nutrition_summary` — combined nutrition breakdown for a full meal
+### Cache Management (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `get_cache_stats` | Cache health — total entries, size, breakdown by source and tool |
+| `list_cached_foods` | Browse which foods are already cached (filterable by source or name) |
+| `clear_cache` | Wipe all or selectively by source/tool |
+
+---
+
+## Data Sources
+
+| Source | Coverage | Rate Limit |
+|--------|----------|------------|
+| [USDA FoodData Central](https://fdc.nal.usda.gov) | 2M+ foods across Foundation, SR Legacy, Branded, Survey datasets | 1 000 req/hr (registered key) |
+| [FatSecret Platform API](https://platform.fatsecret.com) | 2.3M+ foods — strong restaurant and branded coverage | 5 000 req/day (free tier) |
+
+### USDA Dataset Types
+
+| Type | Best for |
+|------|----------|
+| **Foundation** | Raw commodity foods — most precise analytical data |
+| **SR Legacy** | ~8 600 foods (raw, processed, prepared) — broad general use |
+| **Branded** | Packaged and branded products |
+| **Survey (FNDDS)** | Foods as consumed in NHANES surveys |
+
+---
 
 ## Setup
 
-### 1. Get a free API key
+### 1. Get API keys
 
-Register at [api.data.gov/signup](https://api.data.gov/signup/) to get a key with 1 000 req/hr (vs. 30/hr for the demo key).
+- **USDA FDC** — free at [api.data.gov/signup](https://api.data.gov/signup/) — 1 000 req/hr
+- **FatSecret** — free at [platform.fatsecret.com](https://platform.fatsecret.com) — 5 000 req/day
 
 ### 2. Install
 
@@ -51,85 +94,156 @@ Register at [api.data.gov/signup](https://api.data.gov/signup/) to get a key wit
 pip install -e .
 ```
 
-### 3. Configure your API key
+### 3. Configure
 
 ```bash
 cp .env.example .env
-# Edit .env and set USDA_FDC_API_KEY=your_key_here
 ```
+
+Edit `.env`:
+
+```env
+USDA_FDC_API_KEY=your_fdc_key
+FATSECRET_CLIENT_ID=your_fatsecret_id
+FATSECRET_CLIENT_SECRET=your_fatsecret_secret
+
+# Optional cache settings
+CACHE_DB_PATH=          # default: ~/.cache/food_facts_mcp/food_facts.db
+CACHE_TTL_DAYS=         # default: no expiry
+CACHE_ENABLED=true      # set false to disable caching
+```
+
+---
 
 ## Usage
 
-### With Claude Desktop
+### Claude Desktop (stdio)
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "usda-fdc": {
-      "command": "/Users/razvannicolae/.pyenv/versions/3.10.18/bin/python",
-      "args": ["-m", "usda_mcp.server"],
-      "cwd": "/Users/razvannicolae/Code/HooHacks2026",
-      "env": {
-        "USDA_FDC_API_KEY": "your_key_here"
-      }
-    }
-  }
-}
-```
-
-Restart Claude Desktop — you'll see the server listed under the MCP tools icon.
-
-### With Claude Code (this CLI)
-
-Add to your project's `.claude/settings.json` or run:
-
-```bash
-claude mcp add usda-fdc -- python -m usda_mcp.server
-```
-
-Or manually in `.claude/settings.json`:
-```json
-{
-  "mcpServers": {
-    "usda-fdc": {
+    "food-facts": {
       "command": "python",
-      "args": ["-m", "usda_mcp.server"],
-      "cwd": "/Users/razvannicolae/Code/HooHacks2026",
+      "args": ["-m", "food_facts_mcp.server"],
+      "cwd": "/path/to/HooHacks2026",
       "env": {
-        "USDA_FDC_API_KEY": "your_key_here"
+        "USDA_FDC_API_KEY": "your_key",
+        "FATSECRET_CLIENT_ID": "your_id",
+        "FATSECRET_CLIENT_SECRET": "your_secret"
       }
     }
   }
 }
 ```
 
-### Standalone HTTP server
+Restart Claude Desktop — the server appears under the MCP tools icon.
+
+### HTTP server
 
 ```bash
-usda-mcp-server --transport streamable-http --port 8000
-# or
-python -m usda_mcp.server --transport streamable-http --port 8000
+food-facts-server --transport streamable-http --port 8000
 ```
 
-## Data Types
+MCP endpoint: `http://127.0.0.1:8000/mcp`
+Health check: `http://127.0.0.1:8000/`
 
-| Type | Coverage | Best for |
-|------|----------|----------|
-| **Foundation** | Core commodity foods (raw ingredients) | Research — most precise analytical data |
-| **SR Legacy** | ~8 600 foods (raw, processed, prepared) | General nutrition analysis |
-| **Branded** | Commercial products (packaged, fast food) | Specific product label verification |
-| **Survey (FNDDS)** | Foods as consumed in NHANES surveys | Epidemiological / population studies |
+### MCP Inspector (for testing without Claude Desktop)
+
+```bash
+npx @modelcontextprotocol/inspector food-facts-server
+```
+
+---
+
+## Caching
+
+Responses are cached in SQLite after the first API call. Subsequent calls for the same food/query return instantly with no network request.
+
+```
+First call:   search_foods("broccoli")  →  ~1-2s  (USDA API)
+Second call:  search_foods("broccoli")  →  <1ms   (SQLite cache)
+```
+
+The cache is source-agnostic — USDA FDC and FatSecret responses are stored in the same DB under separate source keys. Use `get_cache_stats` to inspect, `list_cached_foods` to browse, and `clear_cache` to reset.
+
+---
+
+## Deployment
+
+### Public HTTPS with Caddy + DuckDNS
+
+**1.** Register a free domain at [duckdns.org](https://www.duckdns.org)
+
+**2.** Start the MCP server:
+
+```bash
+food-facts-server --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+**3.** Create a `Caddyfile`:
+
+```
+yourdomain.duckdns.org {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+**4.** Run Caddy (handles TLS automatically via Let's Encrypt):
+
+```bash
+caddy run --config Caddyfile
+```
+
+**5.** MCP endpoint is now live at `https://yourdomain.duckdns.org/mcp`
+
+### ChatGPT Connector
+
+In ChatGPT → Settings → Connectors, point to `https://yourdomain.duckdns.org/mcp`.
+
+### Extra CORS origins
+
+```bash
+food-facts-server --transport streamable-http \
+  --allow-origin https://myapp.com
+```
+
+---
 
 ## Development
 
 ```bash
 pip install -e .
-python -m pytest tests/ -v   # 25 unit tests, all mocked
+python -m pytest tests/ -v   # 69 tests
 ```
 
-## Sources
+### Project structure
+
+```
+src/food_facts_mcp/
+  server.py            — FastMCP server, tool/resource/prompt registration
+  tools.py             — All tool implementations (FDC + FatSecret)
+  fdc_client.py        — USDA FoodData Central API client
+  fatsecret_client.py  — FatSecret OAuth2 API client
+  cache.py             — SQLite cache layer (FoodCache)
+  citations.py         — APA + MLA citation builders
+  resources.py         — MCP resource handlers + static data
+  prompts.py           — Prompt template definitions
+  sampling.py          — Sampling request builders
+tests/
+  test_tools.py        — FDC tool unit tests (mocked)
+  test_fatsecret.py    — FatSecret tool unit tests (mocked)
+  test_cache.py        — SQLite cache unit tests (in-memory)
+  test_resources.py    — Resource + citation tests
+  test_http_server.py  — HTTP transport + CORS tests
+```
+
+---
+
+## API References
 
 - [USDA FDC API Guide](https://fdc.nal.usda.gov/api-guide/)
 - [FDC OpenAPI Spec](https://fdc.nal.usda.gov/api-spec/fdc_api.html)
+- [FatSecret Platform API Docs](https://platform.fatsecret.com/docs)
+- [Model Context Protocol](https://modelcontextprotocol.io)
