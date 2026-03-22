@@ -41,13 +41,14 @@ mcp = FastMCP(
         "fortified cereals and supplements from flooding the results.\n\n"
         "All tool responses include a 'citation' block with source, fdcId, dataset, and URL.\n\n"
         "FATSECRET (restaurant & branded foods):\n"
-        "- PREFER FatSecret over USDA for any restaurant or fast food query "
-        "(McDonald's, Chick-fil-A, Popeyes, Subway, Chipotle, etc.) — "
-        "FatSecret has better coverage and handles natural language order.\n"
+        "- PREFER FatSecret over USDA for any branded or restaurant query — this includes "
+        "fast food chains (McDonald's, Chick-fil-A, Popeyes, Subway, etc.), packaged grocery "
+        "products (Lay's, Clif Bar, Kraft, etc.), and any query mentioning a brand name. "
+        "FatSecret has broader branded coverage and handles natural language order better.\n"
         "- Use search_fatsecret_foods first, then get_fatsecret_food with the returned food_id "
         "for full nutrition breakdown.\n"
         "- food_type='Brand' = branded/restaurant, food_type='Generic' = generic\n"
-        "- Only fall back to USDA search_foods for restaurant items if FatSecret returns no results."
+        "- Only use USDA search_foods for branded items if FatSecret returns no results."
     ),
 )
 

@@ -86,12 +86,27 @@ _PROCESSING_TERMS = frozenset({
 })
 
 
-def _relevance_score(description: str, query: str) -> int:
+# USDA dataset preference scores.
+# Restaurant meals live in SR Legacy / Survey (FNDDS), not Branded.
+# Branded covers packaged goods with nutrition labels (chips, protein bars, etc.).
+_DATASET_BASE_SCORE: dict[str, int] = {
+    "Foundation": 8,
+    "SR Legacy": 6,
+    "Survey (FNDDS)": 4,
+    "Branded": 0,
+}
+# Extra boost given to SR Legacy for known restaurant brand queries.
+_RESTAURANT_SR_LEGACY_BOOST = 20
+
+
+def _relevance_score(description: str, query: str, data_type: str = "") -> int:
     """Score how well a food description matches the query intent.
 
     Higher is better. Boosts exact/prefix matches; penalises processing terms
     that appear in the description but not in the query (e.g. returns 'salmon,
     raw' above 'salmon fish oil' for the query 'salmon').
+    Also boosts SR Legacy over Branded for restaurant brand queries, since USDA
+    stores restaurant meal items in SR Legacy, not in the Branded dataset.
     """
     desc = description.lower()
     q = query.lower().strip()
@@ -115,6 +130,14 @@ def _relevance_score(description: str, query: str) -> int:
     for term in _PROCESSING_TERMS:
         if term in desc and term not in q_words:
             score -= 30
+
+    # Dataset preference
+    if data_type:
+        score += _DATASET_BASE_SCORE.get(data_type, 0)
+        # Extra boost: restaurant brand queries → strongly prefer SR Legacy
+        is_restaurant_query = any(q.startswith(b) or b in q for b in _KNOWN_BRANDS)
+        if is_restaurant_query and data_type == "SR Legacy":
+            score += _RESTAURANT_SR_LEGACY_BOOST
 
     return score
 
@@ -214,14 +237,18 @@ def search_foods(
         # After the first variant, skip fallback if top result is already relevant
         if i == 0 and len(variants) > 1:
             top_score = max(
-                (_relevance_score(f.get("description", ""), query) for f in seen_ids.values()),
+                (_relevance_score(f.get("description", ""), query, f.get("dataType", ""))
+                 for f in seen_ids.values()),
                 default=0,
             )
             if top_score >= _RELEVANCE_FALLBACK_THRESHOLD:
                 break
 
     merged = list(seen_ids.values())
-    merged.sort(key=lambda f: _relevance_score(f.get("description", ""), query), reverse=True)
+    merged.sort(
+        key=lambda f: _relevance_score(f.get("description", ""), query, f.get("dataType", "")),
+        reverse=True,
+    )
 
     return {
         "source": "USDA FoodData Central",
