@@ -16,6 +16,69 @@ from .fatsecret_client import FatSecretClient
 _fdc: Optional[FDCClient] = None
 _fs: Optional[FatSecretClient] = None
 
+# Known restaurant/brand names whose foods appear in USDA as "Food, Brand"
+_KNOWN_BRANDS = frozenset({
+    "mcdonald's", "mcdonalds", "chick-fil-a", "chick fil a", "chickfila",
+    "popeyes", "popeye's", "subway", "burger king", "taco bell",
+    "wendy's", "wendys", "kfc", "chipotle", "dominos", "domino's",
+    "pizza hut", "starbucks", "dunkin", "panera", "five guys",
+    "shake shack", "sonic", "dairy queen", "arby's", "arbys",
+    "panda express", "olive garden", "applebees", "applebee's",
+    "ihop", "dennys", "denny's", "red lobster", "hardees", "hardee's",
+    "carl's jr", "carls jr", "jack in the box", "whataburger",
+    "raising cane's", "raising canes", "zaxby's", "zaxbys",
+    "wingstop", "buffalo wild wings", "bdubs", "checkers",
+    "del taco", "in-n-out", "little caesars",
+})
+
+
+def _rewrite_brand_first_query(query: str) -> str:
+    """Rewrite 'Brand Food' to 'Food, Brand' to match USDA naming convention.
+
+    USDA stores restaurant items as e.g. 'Coleslaw, Popeyes' so a query like
+    'Popeyes coleslaw' won't match well without this rewrite.
+    """
+    words = query.strip().split()
+    if len(words) < 2:
+        return query
+
+    # Check single-word brand (e.g. "Popeyes coleslaw")
+    if words[0].lower() in _KNOWN_BRANDS:
+        brand = words[0]
+        food = " ".join(words[1:])
+        return f"{food}, {brand}"
+
+    # Check two-word brand (e.g. "Burger King fries")
+    if len(words) >= 3 and " ".join(words[:2]).lower() in _KNOWN_BRANDS:
+        brand = " ".join(words[:2])
+        food = " ".join(words[2:])
+        return f"{food}, {brand}"
+
+    return query
+
+
+def _query_variants(query: str) -> list[str]:
+    """Return query variants to handle USDA 'Food, qualifier' naming convention.
+
+    USDA stores foods as e.g. 'Salmon, raw', 'Chicken, fried', 'Coleslaw, Popeyes'.
+    Users query in natural order: 'raw salmon', 'fried chicken', 'popeyes coleslaw'.
+    If the brand rewrite already reordered the query we use that alone; otherwise
+    we also try moving the first word to the end (covers 2-3 word queries only).
+    """
+    primary = _rewrite_brand_first_query(query)
+    variants = [primary]
+
+    # Only add generic reversal when brand rewrite didn't already change the order
+    if primary.lower() == query.lower():
+        words = query.strip().split()
+        if 2 <= len(words) <= 3:
+            reversed_variant = " ".join(words[1:]) + ", " + words[0]
+            if reversed_variant.lower() != primary.lower():
+                variants.append(reversed_variant)
+
+    return variants
+
+
 # Terms that indicate a processed/supplement form — penalised when absent from query
 _PROCESSING_TERMS = frozenset({
     "oil", "extract", "supplement", "softgel", "capsule",
@@ -78,6 +141,53 @@ def _get_fs() -> FatSecretClient:
 # Tool 1 — search_foods
 # ---------------------------------------------------------------------------
 
+_RELEVANCE_FALLBACK_THRESHOLD = 40  # below this score, try the next query variant
+
+
+def _fetch_search_variant(
+    variant: str,
+    data_type: Optional[list[str]],
+    brand_owner: Optional[str],
+    page_size: int,
+    page_number: int,
+    cache,
+) -> tuple[list[dict], int]:
+    """Fetch (or cache-hit) one query variant. Returns (food list, totalHits)."""
+    key = FoodCache.make_key("search_foods", query=variant,
+                             data_type=sorted(data_type) if data_type else None,
+                             brand_owner=brand_owner, page_size=page_size,
+                             page_number=page_number)
+    if cache and (hit := cache.get("usda_fdc", key)):
+        return hit.get("foods", []), hit.get("totalHits", 0)
+
+    result = _get_fdc().search_foods(
+        query=variant,
+        data_type=data_type,
+        brand_owner=brand_owner,
+        page_size=page_size,
+        page_number=page_number,
+    )
+    foods = [
+        {
+            "fdcId": f.get("fdcId"),
+            "description": f.get("description"),
+            "dataType": f.get("dataType"),
+            "brandOwner": f.get("brandOwner"),
+            "publishedDate": f.get("publishedDate"),
+        }
+        for f in result.get("foods", [])
+    ]
+    if cache:
+        cache.set("usda_fdc", "search_foods", key, {
+            "source": "USDA FoodData Central",
+            "totalHits": result.get("totalHits", 0),
+            "currentPage": result.get("currentPage", 1),
+            "totalPages": result.get("totalPages", 1),
+            "foods": foods,
+        })
+    return foods, result.get("totalHits", 0)
+
+
 def search_foods(
     query: str,
     data_type: Optional[list[str]] = None,
@@ -85,41 +195,41 @@ def search_foods(
     page_size: int = 25,
     page_number: int = 1,
 ) -> dict:
+    variants = _query_variants(query)
     cache = get_cache()
-    key = FoodCache.make_key("search_foods", query=query,
-                             data_type=sorted(data_type) if data_type else None,
-                             brand_owner=brand_owner, page_size=page_size,
-                             page_number=page_number)
-    if cache and (hit := cache.get("usda_fdc", key)):
-        return hit
-    result = _get_fdc().search_foods(
-        query=query,
-        data_type=data_type,
-        brand_owner=brand_owner,
-        page_size=page_size,
-        page_number=page_number,
-    )
-    foods = result.get("foods", [])
-    foods.sort(key=lambda f: _relevance_score(f.get("description", ""), query), reverse=True)
-    response = {
+
+    seen_ids: dict[int, dict] = {}
+    best_total_hits = 0
+
+    for i, variant in enumerate(variants):
+        foods, total_hits = _fetch_search_variant(
+            variant, data_type, brand_owner, page_size, page_number, cache
+        )
+        for f in foods:
+            fdc_id = f.get("fdcId")
+            if fdc_id and fdc_id not in seen_ids:
+                seen_ids[fdc_id] = f
+        best_total_hits = max(best_total_hits, total_hits)
+
+        # After the first variant, skip fallback if top result is already relevant
+        if i == 0 and len(variants) > 1:
+            top_score = max(
+                (_relevance_score(f.get("description", ""), query) for f in seen_ids.values()),
+                default=0,
+            )
+            if top_score >= _RELEVANCE_FALLBACK_THRESHOLD:
+                break
+
+    merged = list(seen_ids.values())
+    merged.sort(key=lambda f: _relevance_score(f.get("description", ""), query), reverse=True)
+
+    return {
         "source": "USDA FoodData Central",
-        "totalHits": result.get("totalHits", 0),
-        "currentPage": result.get("currentPage", 1),
-        "totalPages": result.get("totalPages", 1),
-        "foods": [
-            {
-                "fdcId": f.get("fdcId"),
-                "description": f.get("description"),
-                "dataType": f.get("dataType"),
-                "brandOwner": f.get("brandOwner"),
-                "publishedDate": f.get("publishedDate"),
-            }
-            for f in foods
-        ],
+        "totalHits": best_total_hits,
+        "currentPage": page_number,
+        "totalPages": 1,
+        "foods": merged,
     }
-    if cache:
-        cache.set("usda_fdc", "search_foods", key, response)
-    return response
 
 
 # ---------------------------------------------------------------------------
