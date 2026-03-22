@@ -66,7 +66,10 @@ class FatSecretClient:
         if response.status_code == 429:
             raise FatSecretError(429, "Rate limit exceeded (5 000 req/day)")
         response.raise_for_status()
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise FatSecretError(0, f"Invalid JSON response: {exc}") from exc
         # FatSecret returns HTTP 200 even for API-level errors
         if "error" in data:
             err = data["error"]

@@ -551,7 +551,7 @@ def search_fatsecret_foods(
         desc = f.get("food_description", "")
         parsed = _parse_food_description(desc)
         results.append({
-            "foodId": int(f.get("food_id", 0)),
+            "foodId": int(f["food_id"]) if str(f.get("food_id", "")).isdigit() else f.get("food_id"),
             "foodName": f.get("food_name"),
             "foodType": f.get("food_type"),
             "brandName": f.get("brand_name"),

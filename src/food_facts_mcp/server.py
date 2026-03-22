@@ -1,8 +1,9 @@
 """Food Facts MCP Server.
 
-USDA FoodData Central — 8 tools, 4 resources, 4 prompts.
-FatSecret — 2 tools (search_fatsecret_foods, get_fatsecret_food).
-Cache management — 3 tools (get_cache_stats, list_cached_foods, clear_cache).
+Data sources:
+  USDA FoodData Central — 8 tools, 4 resources, 4 prompts
+  FatSecret              — 2 tools (restaurant & branded foods)
+  Cache management       — 3 tools (stats, browse, clear)
 
 Transport options (--transport flag):
   stdio               — default, used by Claude Desktop / Claude Code

@@ -1,3 +1,3 @@
-"""Food Facts MCP — USDA FoodData Central + Open Food Facts."""
+"""Food Facts MCP — USDA FoodData Central + FatSecret."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

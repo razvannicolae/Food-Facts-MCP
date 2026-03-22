@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "food-facts-mcp"
-version = "0.2.0"
-description = "Food Facts MCP — USDA FoodData Central + Open Food Facts"
+version = "0.3.0"
+description = "Food Facts MCP — USDA FoodData Central + FatSecret"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
