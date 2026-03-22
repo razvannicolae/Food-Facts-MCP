@@ -16,6 +16,45 @@ from .fatsecret_client import FatSecretClient
 _fdc: Optional[FDCClient] = None
 _fs: Optional[FatSecretClient] = None
 
+# Terms that indicate a processed/supplement form — penalised when absent from query
+_PROCESSING_TERMS = frozenset({
+    "oil", "extract", "supplement", "softgel", "capsule",
+    "powder", "concentrate", "tablet", "tincture", "gel",
+})
+
+
+def _relevance_score(description: str, query: str) -> int:
+    """Score how well a food description matches the query intent.
+
+    Higher is better. Boosts exact/prefix matches; penalises processing terms
+    that appear in the description but not in the query (e.g. returns 'salmon,
+    raw' above 'salmon fish oil' for the query 'salmon').
+    """
+    desc = description.lower()
+    q = query.lower().strip()
+    q_words = set(q.split())
+
+    score = 0
+    # Exact match
+    if desc == q:
+        score += 100
+    # Description starts with the query
+    elif desc.startswith(q):
+        score += 80
+    # First comma-segment equals query (e.g. "Salmon, raw" → "salmon")
+    elif desc.split(",")[0].strip() == q:
+        score += 70
+    # Query appears within the first 50 chars
+    elif q in desc[:50]:
+        score += 40
+
+    # Penalise each processing term present in description but absent from query
+    for term in _PROCESSING_TERMS:
+        if term in desc and term not in q_words:
+            score -= 30
+
+    return score
+
 
 def _get_fdc() -> FDCClient:
     global _fdc
@@ -61,6 +100,7 @@ def search_foods(
         page_number=page_number,
     )
     foods = result.get("foods", [])
+    foods.sort(key=lambda f: _relevance_score(f.get("description", ""), query), reverse=True)
     response = {
         "source": "USDA FoodData Central",
         "totalHits": result.get("totalHits", 0),
@@ -544,6 +584,8 @@ def search_fatsecret_foods(
     if isinstance(items, dict):
         # single result returned as dict, not list
         items = [items]
+
+    items.sort(key=lambda f: _relevance_score(f.get("food_name", ""), query), reverse=True)
 
     results = []
     for f in items:

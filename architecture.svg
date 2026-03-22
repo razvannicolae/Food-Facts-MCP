@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="540" viewBox="0 0 800 540" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Arial, sans-serif">
+
+  <!-- Background -->
+  <rect width="800" height="540" fill="#0f1117" rx="16"/>
+
+  <!-- Title -->
+  <text x="400" y="34" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="700" letter-spacing="0.5">Food Facts MCP — Architecture</text>
+
+  <!-- ── AI CLIENT ── -->
+  <rect x="255" y="50" width="290" height="48" rx="8" fill="#1a1b2e" stroke="#6c63ff" stroke-width="2.5"/>
+  <text x="400" y="70" text-anchor="middle" fill="#a89ff7" font-size="12" font-weight="700">AI CLIENT</text>
+  <text x="400" y="88" text-anchor="middle" fill="#6b6b8a" font-size="10">Claude Desktop · ChatGPT · Any MCP client</text>
+
+  <!-- Arrow AI → Server -->
+  <line x1="400" y1="98" x2="400" y2="128" stroke="#6c63ff" stroke-width="2"/>
+  <polygon points="400,134 393,122 407,122" fill="#6c63ff"/>
+  <text x="438" y="120" fill="#6c63ff" font-size="9.5">MCP / JSON-RPC</text>
+
+  <!-- ── MCP SERVER ── -->
+  <rect x="110" y="138" width="580" height="48" rx="8" fill="#1a1b2e" stroke="#3b82f6" stroke-width="2.5"/>
+  <text x="400" y="158" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="700">FOOD FACTS MCP SERVER</text>
+  <text x="400" y="176" text-anchor="middle" fill="#6b6b8a" font-size="10">server.py · FastMCP · 13 tools · 4 prompts · 5 resources · stdio or HTTP</text>
+
+  <!-- Arrow Server → Tools -->
+  <line x1="400" y1="186" x2="400" y2="215" stroke="#3b82f6" stroke-width="2"/>
+  <polygon points="400,221 393,209 407,209" fill="#3b82f6"/>
+
+  <!-- ── TOOLS.PY (full width hub) ── -->
+  <rect x="40" y="224" width="720" height="40" rx="8" fill="#151626" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="7,3"/>
+  <text x="400" y="241" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700">tools.py</text>
+  <text x="400" y="256" text-anchor="middle" fill="#6b6b8a" font-size="10">checks cache first · on miss calls API client · stores result in cache</text>
+
+  <!-- Arrows tools → 3 columns (colored by destination) -->
+  <!-- tools → FDC (green) -->
+  <line x1="147" y1="264" x2="147" y2="304" stroke="#22c55e" stroke-width="1.8"/>
+  <polygon points="147,310 140,298 154,298" fill="#22c55e"/>
+
+  <!-- tools → Cache (pink) -->
+  <line x1="400" y1="264" x2="400" y2="304" stroke="#ec4899" stroke-width="1.8"/>
+  <polygon points="400,310 393,298 407,298" fill="#ec4899"/>
+
+  <!-- tools → FatSecret (amber) -->
+  <line x1="653" y1="264" x2="653" y2="304" stroke="#f59e0b" stroke-width="1.8"/>
+  <polygon points="653,310 646,298 660,298" fill="#f59e0b"/>
+
+  <!-- ── FDC CLIENT ── -->
+  <rect x="47" y="312" width="200" height="52" rx="8" fill="#0d1f14" stroke="#22c55e" stroke-width="2"/>
+  <text x="147" y="333" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="700">fdc_client.py</text>
+  <text x="147" y="349" text-anchor="middle" fill="#6b6b8a" font-size="10">httpx · sync</text>
+  <text x="147" y="362" text-anchor="middle" fill="#6b6b8a" font-size="10">1 000 req / hr</text>
+
+  <!-- ── CACHE.PY ── -->
+  <rect x="300" y="312" width="200" height="52" rx="8" fill="#1a0d19" stroke="#ec4899" stroke-width="2"/>
+  <text x="400" y="333" text-anchor="middle" fill="#f472b6" font-size="11" font-weight="700">cache.py</text>
+  <text x="400" y="349" text-anchor="middle" fill="#6b6b8a" font-size="10">SHA-256 keys · WAL mode</text>
+  <text x="400" y="362" text-anchor="middle" fill="#6b6b8a" font-size="10">&lt;1ms hit · no network</text>
+
+  <!-- ── FATSECRET CLIENT ── -->
+  <rect x="553" y="312" width="200" height="52" rx="8" fill="#1f1a0d" stroke="#f59e0b" stroke-width="2"/>
+  <text x="653" y="333" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700">fatsecret_client.py</text>
+  <text x="653" y="349" text-anchor="middle" fill="#6b6b8a" font-size="10">OAuth 2.0 · auto refresh</text>
+  <text x="653" y="362" text-anchor="middle" fill="#6b6b8a" font-size="10">5 000 req / day</text>
+
+  <!-- Arrows: each client → its backing store (same color) -->
+  <!-- FDC → USDA API -->
+  <line x1="147" y1="364" x2="147" y2="403" stroke="#22c55e" stroke-width="1.8"/>
+  <polygon points="147,409 140,397 154,397" fill="#22c55e"/>
+
+  <!-- Cache → SQLite -->
+  <line x1="400" y1="364" x2="400" y2="403" stroke="#ec4899" stroke-width="1.8"/>
+  <polygon points="400,409 393,397 407,397" fill="#ec4899"/>
+  <rect x="412" y="376" width="56" height="14" rx="3" fill="#0f1117"/>
+  <text x="440" y="387" text-anchor="middle" fill="#ec4899" font-size="9">read / write</text>
+
+  <!-- FatSecret → FatSecret API -->
+  <line x1="653" y1="364" x2="653" y2="403" stroke="#f59e0b" stroke-width="1.8"/>
+  <polygon points="653,409 646,397 660,397" fill="#f59e0b"/>
+
+  <!-- ── USDA FDC API ── -->
+  <rect x="47" y="411" width="200" height="52" rx="8" fill="#061209" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="147" y="431" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="700">USDA FoodData Central</text>
+  <text x="147" y="447" text-anchor="middle" fill="#6b6b8a" font-size="10">fdc.nal.usda.gov · REST</text>
+  <text x="147" y="461" text-anchor="middle" fill="#6b6b8a" font-size="10">2M+ foods · 4 datasets</text>
+
+  <!-- ── SQLITE DATABASE ── -->
+  <rect x="300" y="411" width="200" height="52" rx="8" fill="#120819" stroke="#ec4899" stroke-width="1.5"/>
+  <text x="400" y="431" text-anchor="middle" fill="#f472b6" font-size="11" font-weight="700">SQLite Database</text>
+  <text x="400" y="447" text-anchor="middle" fill="#6b6b8a" font-size="10">cache_entries · food_index</text>
+  <text x="400" y="461" text-anchor="middle" fill="#6b6b8a" font-size="10">~/.cache/food_facts_mcp/</text>
+
+  <!-- ── FATSECRET API ── -->
+  <rect x="553" y="411" width="200" height="52" rx="8" fill="#120e03" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="653" y="431" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="700">FatSecret Platform API</text>
+  <text x="653" y="447" text-anchor="middle" fill="#6b6b8a" font-size="10">platform.fatsecret.com · REST</text>
+  <text x="653" y="461" text-anchor="middle" fill="#6b6b8a" font-size="10">2.3M+ foods · restaurants</text>
+
+  <!-- Legend -->
+  <rect x="40" y="482" width="720" height="34" rx="7" fill="#161820" stroke="#2a2a3a" stroke-width="1"/>
+  <circle cx="74" cy="499" r="4.5" fill="#6c63ff"/>
+  <text x="85" y="503" fill="#6b6b8a" font-size="10">Protocol</text>
+  <circle cx="148" cy="499" r="4.5" fill="#3b82f6"/>
+  <text x="159" y="503" fill="#6b6b8a" font-size="10">App layer</text>
+  <circle cx="228" cy="499" r="4.5" fill="#22c55e"/>
+  <text x="239" y="503" fill="#6b6b8a" font-size="10">USDA FDC</text>
+  <circle cx="312" cy="499" r="4.5" fill="#f59e0b"/>
+  <text x="323" y="503" fill="#6b6b8a" font-size="10">FatSecret</text>
+  <circle cx="393" cy="499" r="4.5" fill="#ec4899"/>
+  <text x="404" y="503" fill="#6b6b8a" font-size="10">Cache / SQLite</text>
+  <text x="508" y="503" fill="#6b6b8a" font-size="10">Each color traces an independent data path end-to-end</text>
+
+</svg>

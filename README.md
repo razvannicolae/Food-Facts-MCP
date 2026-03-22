@@ -6,11 +6,11 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that g
 
 ## The problem
 
-AI assistants like Claude know a lot about nutrition in general, but they cannot reliably answer specific nutrition questions without this server. Three concrete failure modes:
+AI assistants like Claude and ChatGPT know a lot about nutrition in general, but they cannot reliably answer specific nutrition questions without this server. Three concrete failure modes:
 
 **1. Hallucinated numbers.** Ask Claude "how much protein is in a Chick-fil-A Deluxe Sandwich?" without live data access and it will produce a plausible-sounding number from training data — which may be wrong, outdated, or for a different serving size. There is no way for the model to know it's wrong.
 
-**2. No citations.** Any nutrition claim an AI makes from memory is uncitable. For dietary tracking, research, or anything that matters, you need a traceable source. Without this server, Claude cannot point you to a specific USDA FDC record or FatSecret entry — it can only say "according to general knowledge."
+**2. No citations.** Any nutrition claim an AI makes from memory is uncitable. For dietary tracking, research, or anything that matters, you need a traceable source. Without this server, LLMs cannot point you to a specific USDA FDC record or FatSecret entry — it can only say "according to general knowledge."
 
 **3. Stale data.** Restaurant menus and product formulations change. An AI's training data has a cutoff; it has no way to reflect a menu item that was reformulated last quarter. This server fetches live data every time (and caches it), so the numbers are current.
 
