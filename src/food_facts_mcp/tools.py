@@ -244,6 +244,22 @@ def search_foods(
             if top_score >= _RELEVANCE_FALLBACK_THRESHOLD:
                 break
 
+    # For restaurant brand queries, always also search SR Legacy explicitly.
+    # The USDA API ranks Branded results higher by default, so SR Legacy entries
+    # (where restaurant meals actually live) may not appear in the initial results.
+    if data_type is None:
+        q_lower = query.lower()
+        is_restaurant = any(q_lower.startswith(b) or b in q_lower for b in _KNOWN_BRANDS)
+        if is_restaurant:
+            sr_foods, sr_total = _fetch_search_variant(
+                variants[0], ["SR Legacy"], brand_owner, page_size, page_number, cache
+            )
+            for f in sr_foods:
+                fdc_id = f.get("fdcId")
+                if fdc_id and fdc_id not in seen_ids:
+                    seen_ids[fdc_id] = f
+            best_total_hits = max(best_total_hits, sr_total)
+
     merged = list(seen_ids.values())
     merged.sort(
         key=lambda f: _relevance_score(f.get("description", ""), query, f.get("dataType", "")),
