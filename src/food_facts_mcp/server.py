@@ -404,12 +404,12 @@ def _build_http_app(extra_origins: list[str]):
     trusted_origin_set = set(origins)
 
     class OriginRewriteMiddleware:
-        """Rewrite explicitly trusted browser origins before FastMCP validates them.
+        """Strip explicitly trusted browser origins before FastMCP validates them.
 
         FastMCP performs its own origin checks internally. For a reverse-proxied
-        public deployment, we still want outer CORS to see the real browser
-        origin, but we need the inner MCP app to treat trusted frontend origins
-        like localhost to avoid false rejections.
+        public deployment, outer CORS should still see the real browser origin,
+        but the inner MCP app should not reject trusted browser requests just
+        because they include an Origin header.
         """
 
         def __init__(self, app):
@@ -420,7 +420,7 @@ def _build_http_app(extra_origins: list[str]):
                 headers = MutableHeaders(scope=scope)
                 origin = headers.get("origin")
                 if origin and origin in trusted_origin_set:
-                    headers["origin"] = "http://localhost"
+                    del headers["origin"]
             await self.app(scope, receive, send)
 
     class HealthCheck(BaseHTTPMiddleware):
